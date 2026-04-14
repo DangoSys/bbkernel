@@ -1,0 +1,15 @@
+#!/bin/sh
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || mdev -s
+
+echo ""
+echo "=== Buckyball Pegasus RISC-V Linux ==="
+echo ""
+exec /bin/sh
+
+# if you want to run workload automatically, you can remove the 'exec /bin/sh'
+# and add the following lines to the end of the file:
+# /root/xxx-linux
+# echo "WORKLOAD_DONE"
+# poweroff -f
