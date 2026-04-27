@@ -22,7 +22,7 @@ set(BUSYBOX_DIR    ${THIRDPARTY_DIR}/busybox)
 set(CONFIG_DIR     ${KERNEL_DIR}/config)
 set(OVERLAY_DIR    ${KERNEL_DIR}/overlay)
 # Output goes to bb-tests/output/kernel/ (consistent with other bb-tests outputs)
-set(OUTPUT_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/../../output/kernel)
+set(OUTPUT_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/../../../output/kernel)
 
 set(CROSS_COMPILE  riscv64-unknown-linux-gnu-)
 set(ARCH           riscv)
