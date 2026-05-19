@@ -1,12 +1,12 @@
-# bbkernel — RISC-V Linux kernel + rootfs builder for Pegasus FPGA
+# bbkernel — RISC-V Linux kernel + rootfs builder for image
 #
 # Submodules (in bb-tests/thirdparty/):
 #   linux/    — firesim/linux v6.6 fork
 #   busybox/  — busybox 1.36
 #
 # Outputs (in bb-tests/output/kernel/):
-#   pegasus-bin   Linux Image (raw binary, RISC-V, loaded at 0x80200000)
-#   pegasus.img   ext4 rootfs image (128 MB, with workload binaries in /root/)
+#   image.bin   Linux Image (raw binary, RISC-V, loaded at 0x80200000)
+#   image.img   ext4 rootfs image (128 MB, with workload binaries in /root/)
 #
 # Usage:
 #   cmake -B <build_dir> -S .
@@ -28,8 +28,8 @@ set(CROSS_COMPILE  riscv64-unknown-linux-gnu-)
 set(ARCH           riscv)
 set(NPROC          4)
 
-set(KERNEL_IMAGE  ${OUTPUT_DIR}/pegasus-bin)
-set(ROOTFS_IMAGE  ${OUTPUT_DIR}/pegasus.img)
+set(KERNEL_IMAGE  ${OUTPUT_DIR}/image.bin)
+set(ROOTFS_IMAGE  ${OUTPUT_DIR}/image.img)
 set(BUSYBOX_BIN   ${CMAKE_BINARY_DIR}/busybox/busybox)
 set(ROOTFS_DIR    ${CMAKE_BINARY_DIR}/rootfs)
 
@@ -118,7 +118,7 @@ add_custom_command(
     # Pack into ext4 image
     COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_DIR}
     COMMAND bash -c "dd if=/dev/zero of=${ROOTFS_IMAGE} bs=1M count=128 status=none"
-    COMMAND mke2fs -t ext4 -d ${ROOTFS_DIR} -L pegasus-rootfs -F ${ROOTFS_IMAGE}
+    COMMAND mke2fs -t ext4 -d ${ROOTFS_DIR} -L image-rootfs -F ${ROOTFS_IMAGE}
     DEPENDS ${BUSYBOX_BIN} ${OVERLAY_DIR}/init
     COMMENT "Assembling ext4 rootfs (with workload binaries in /root/)"
     VERBATIM
@@ -137,5 +137,5 @@ add_custom_command(
 # ── top-level target ──────────────────────────────────────────────────────────
 add_custom_target(kernel-build
     DEPENDS ${KERNEL_IMAGE} ${ROOTFS_IMAGE}
-    COMMENT "Pegasus kernel + rootfs ready in ${OUTPUT_DIR}"
+    COMMENT "Image ready in ${OUTPUT_DIR}"
 )

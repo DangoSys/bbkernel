@@ -4,7 +4,7 @@ mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || mdev -s
 
 echo ""
-echo "=== Buckyball Pegasus RISC-V Linux ==="
+echo "=== Buckyball RISC-V Linux ==="
 echo ""
 exec /bin/sh
 
