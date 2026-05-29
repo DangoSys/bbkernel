@@ -34,7 +34,8 @@ set(NPROC          4)
 set(OPENSBI_FW    ${OUTPUT_DIR}/fw_payload.bin)
 set(BUSYBOX_BIN   ${CMAKE_BINARY_DIR}/busybox/busybox)
 set(ROOTFS_DIR    ${CMAKE_BINARY_DIR}/rootfs)
-set(ROOTFS_CPIO   ${CMAKE_BINARY_DIR}/rootfs.cpio)
+set(ROOTFS_STAMP  ${CMAKE_BINARY_DIR}/rootfs.stamp)
+set(INITRAMFS_DEVNODES ${CONFIG_DIR}/initramfs-devnodes.list)
 
 # ── busybox ───────────────────────────────────────────────────────────────────
 add_custom_command(
@@ -61,11 +62,12 @@ add_custom_command(
 
 add_custom_target(busybox-build DEPENDS ${BUSYBOX_BIN})
 
-# ── rootfs cpio ──────────────────────────────────────────────────────────────
+# ── initramfs source tree ────────────────────────────────────────────────────
 set(WORKLOADS_OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../output/workloads)
 
 add_custom_command(
-    OUTPUT  ${ROOTFS_CPIO}
+    OUTPUT  ${ROOTFS_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${ROOTFS_DIR}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${ROOTFS_DIR}/bin
                                                ${ROOTFS_DIR}/sbin
                                                ${ROOTFS_DIR}/etc
@@ -76,22 +78,25 @@ add_custom_command(
                                                ${ROOTFS_DIR}/root
     # Install busybox and create symlinks
     COMMAND ${CMAKE_COMMAND} -E copy ${BUSYBOX_BIN} ${ROOTFS_DIR}/bin/busybox
-    COMMAND bash -c "cd ${ROOTFS_DIR}/bin && for app in sh ash ls cat echo mount umount mkdir rm cp mv ps top free; do ln -sf busybox $$app 2>/dev/null; done"
-    COMMAND bash -c "ln -sf ../bin/busybox ${ROOTFS_DIR}/sbin/init 2>/dev/null; true"
+    COMMAND ${CMAKE_COMMAND}
+            -DROOTFS_DIR=${ROOTFS_DIR}
+            -P ${KERNEL_DIR}/scripts/create-busybox-links.cmake
     # Copy overlay (init script, etc/)
     COMMAND bash -c "cp -r ${OVERLAY_DIR}/. ${ROOTFS_DIR}/"
     COMMAND chmod +x ${ROOTFS_DIR}/init
     # Copy workload binaries
     COMMAND bash ${KERNEL_DIR}/scripts/install-workloads.sh
             ${WORKLOADS_OUTPUT_DIR} ${ROOTFS_DIR}/root
-    # Pack into cpio
-    COMMAND bash -c "cd ${ROOTFS_DIR} && find . | cpio -o -H newc > ${ROOTFS_CPIO}"
-    DEPENDS ${BUSYBOX_BIN} ${OVERLAY_DIR}/init
-    COMMENT "Creating initramfs cpio"
+    COMMAND ${CMAKE_COMMAND} -E touch ${ROOTFS_STAMP}
+    DEPENDS ${BUSYBOX_BIN}
+            ${OVERLAY_DIR}/init
+            ${INITRAMFS_DEVNODES}
+            ${KERNEL_DIR}/scripts/create-busybox-links.cmake
+    COMMENT "Creating initramfs source tree"
     VERBATIM
 )
 
-add_custom_target(rootfs-cpio DEPENDS ${ROOTFS_CPIO})
+add_custom_target(rootfs-build DEPENDS ${ROOTFS_STAMP})
 
 # ── linux kernel with initramfs ───────────────────────────────────────────────
 set(LINUX_BUILD_DIR ${CMAKE_BINARY_DIR}/linux)
@@ -108,8 +113,8 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy
             ${CONFIG_DIR}/linux-config
             ${LINUX_BUILD_DIR}/.config
-    # Set initramfs source to our cpio
-    COMMAND bash -c "echo 'CONFIG_INITRAMFS_SOURCE=\"${ROOTFS_CPIO}\"' >> ${LINUX_BUILD_DIR}/.config"
+    # Set initramfs source to rootfs directory plus device-node spec.
+    COMMAND bash -c "echo 'CONFIG_INITRAMFS_SOURCE=\"${ROOTFS_DIR} ${INITRAMFS_DEVNODES}\"' >> ${LINUX_BUILD_DIR}/.config"
     COMMAND make -C ${LINUX_DIR}
             ARCH=${ARCH}
             CROSS_COMPILE=${CROSS_COMPILE}
@@ -121,7 +126,7 @@ add_custom_command(
             O=${LINUX_BUILD_DIR}
             -j${NPROC}
             Image
-    DEPENDS ${CONFIG_DIR}/linux-config ${ROOTFS_CPIO}
+    DEPENDS ${CONFIG_DIR}/linux-config ${ROOTFS_STAMP} ${INITRAMFS_DEVNODES}
     COMMENT "Building Linux kernel with initramfs"
     VERBATIM
 )
@@ -131,6 +136,10 @@ add_custom_target(linux-build DEPENDS ${LINUX_IMAGE_PATH})
 # ── opensbi fw_payload ───────────────────────────────────────────────────────
 set(OPENSBI_BUILD_DIR ${CMAKE_BINARY_DIR}/opensbi)
 set(OPENSBI_FW_PATH ${OPENSBI_BUILD_DIR}/platform/buckyball/firmware/fw_payload.bin)
+set(OPENSBI_PLATFORM_SOURCES
+    ${PLATFORM_DIR}/buckyball/Kconfig
+    ${PLATFORM_DIR}/buckyball/objects.mk
+    ${PLATFORM_DIR}/buckyball/platform.c)
 
 add_custom_command(
     OUTPUT  ${OPENSBI_FW_PATH}
@@ -140,7 +149,7 @@ add_custom_command(
             PLATFORM=buckyball
             O=${OPENSBI_BUILD_DIR}
             FW_PAYLOAD_PATH=${LINUX_IMAGE_PATH}
-    DEPENDS ${LINUX_IMAGE_PATH}
+    DEPENDS ${LINUX_IMAGE_PATH} ${OPENSBI_PLATFORM_SOURCES}
     COMMENT "Building OpenSBI fw_payload with Linux"
     VERBATIM
 )

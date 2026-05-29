@@ -10,7 +10,9 @@
 
 #include <sbi/riscv_asm.h>
 #include <sbi/sbi_console.h>
+#include <sbi/sbi_error.h>
 #include <sbi/sbi_hartmask.h>
+#include <sbi/sbi_heap.h>
 #include <sbi/sbi_platform.h>
 #include <sbi_utils/ipi/aclint_mswi.h>
 #include <sbi_utils/irqchip/plic.h>
@@ -20,10 +22,13 @@
 #define BUCKYBALL_CLINT_ADDR		0x02000000
 #define BUCKYBALL_PLIC_ADDR		0x0C000000
 #define BUCKYBALL_PLIC_SIZE		0x04000000
-#define BUCKYBALL_PLIC_NUM_SOURCES	127
+#define BUCKYBALL_PLIC_NUM_SOURCES	1
 #define BUCKYBALL_SCU_BASE		0x60000000UL
 #define BUCKYBALL_SCU_STRIDE		0x40000UL
 #define BUCKYBALL_SCU_UART_OFFSET	0x20000UL
+#define BUCKYBALL_SCU_UART_RX_OFFSET	0x20004UL
+#define BUCKYBALL_SCU_UART_STATUS_OFFSET 0x20005UL
+#define BUCKYBALL_SCU_UART_RX_VALID	0x01
 #define BUCKYBALL_MTIMER_FREQ		10000000
 
 /* SCU console: per-hart UART at base + hartid*stride + offset */
@@ -37,16 +42,29 @@ static void buckyball_console_putc(char ch)
 	*uart = (unsigned char)ch;
 }
 
+static int buckyball_console_getc(void)
+{
+	unsigned long hartid = current_hartid();
+	unsigned long hart_base = BUCKYBALL_SCU_BASE +
+		hartid * BUCKYBALL_SCU_STRIDE;
+	volatile unsigned char *status = (volatile unsigned char *)(
+		hart_base + BUCKYBALL_SCU_UART_STATUS_OFFSET);
+	volatile unsigned char *rx = (volatile unsigned char *)(
+		hart_base + BUCKYBALL_SCU_UART_RX_OFFSET);
+
+	if (!(*status & BUCKYBALL_SCU_UART_RX_VALID))
+		return -1;
+
+	return *rx;
+}
+
 static struct sbi_console_device buckyball_console = {
 	.name = "buckyball-scu",
 	.console_putc = buckyball_console_putc,
+	.console_getc = buckyball_console_getc,
 };
 
-static struct plic_data plic = {
-	.addr = BUCKYBALL_PLIC_ADDR,
-	.size = BUCKYBALL_PLIC_SIZE,
-	.num_src = BUCKYBALL_PLIC_NUM_SOURCES,
-};
+static struct plic_data *plic;
 
 static struct aclint_mswi_data mswi = {
 	.addr = BUCKYBALL_CLINT_ADDR + CLINT_MSWI_OFFSET,
@@ -84,7 +102,23 @@ static int buckyball_final_init(bool cold_boot)
 
 static int buckyball_irqchip_init(void)
 {
-	return plic_cold_irqchip_init(&plic);
+	int i;
+
+	plic = sbi_zalloc(PLIC_DATA_SIZE(BUCKYBALL_HART_COUNT));
+	if (!plic)
+		return SBI_ENOMEM;
+
+	plic->unique_id = 0;
+	plic->addr = BUCKYBALL_PLIC_ADDR;
+	plic->size = BUCKYBALL_PLIC_SIZE;
+	plic->num_src = BUCKYBALL_PLIC_NUM_SOURCES;
+
+	for (i = 0; i < BUCKYBALL_HART_COUNT; i++) {
+		plic->context_map[i][PLIC_M_CONTEXT] = i * 2;
+		plic->context_map[i][PLIC_S_CONTEXT] = i * 2 + 1;
+	}
+
+	return plic_cold_irqchip_init(plic);
 }
 
 static int buckyball_timer_init(void)
@@ -106,5 +140,6 @@ const struct sbi_platform platform = {
 	.features          = SBI_PLATFORM_DEFAULT_FEATURES,
 	.hart_count        = BUCKYBALL_HART_COUNT,
 	.hart_stack_size   = SBI_PLATFORM_DEFAULT_HART_STACK_SIZE,
+	.heap_size         = SBI_PLATFORM_DEFAULT_HEAP_SIZE(BUCKYBALL_HART_COUNT),
 	.platform_ops_addr = (unsigned long)&platform_ops,
 };
