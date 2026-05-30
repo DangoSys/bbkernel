@@ -11,9 +11,11 @@
 #include <sbi/riscv_asm.h>
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_error.h>
+#include <sbi/sbi_ecall_interface.h>
 #include <sbi/sbi_hartmask.h>
 #include <sbi/sbi_heap.h>
 #include <sbi/sbi_platform.h>
+#include <sbi/sbi_system.h>
 #include <sbi_utils/ipi/aclint_mswi.h>
 #include <sbi_utils/irqchip/plic.h>
 #include <sbi_utils/timer/aclint_mtimer.h>
@@ -30,6 +32,7 @@
 #define BUCKYBALL_SCU_UART_STATUS_OFFSET 0x20005UL
 #define BUCKYBALL_SCU_UART_RX_VALID	0x01
 #define BUCKYBALL_MTIMER_FREQ		10000000
+#define BUCKYBALL_SIM_EXIT_SUCCESS	0
 
 /* SCU console: per-hart UART at base + hartid*stride + offset */
 static void buckyball_console_putc(char ch)
@@ -66,6 +69,35 @@ static struct sbi_console_device buckyball_console = {
 
 static struct plic_data *plic;
 
+static int buckyball_system_reset_check(u32 type, u32 reason)
+{
+	if (type == SBI_SRST_RESET_TYPE_SHUTDOWN)
+		return 1;
+
+	return 0;
+}
+
+static void buckyball_system_reset(u32 type, u32 reason)
+{
+	unsigned long hartid = current_hartid();
+	volatile unsigned int *sim_exit = (volatile unsigned int *)(
+		BUCKYBALL_SCU_BASE + hartid * BUCKYBALL_SCU_STRIDE);
+
+	(void)type;
+	(void)reason;
+
+	*sim_exit = BUCKYBALL_SIM_EXIT_SUCCESS;
+
+	while (1)
+		wfi();
+}
+
+static struct sbi_system_reset_device buckyball_reset = {
+	.name = "buckyball-scu-reset",
+	.system_reset_check = buckyball_system_reset_check,
+	.system_reset = buckyball_system_reset,
+};
+
 static struct aclint_mswi_data mswi = {
 	.addr = BUCKYBALL_CLINT_ADDR + CLINT_MSWI_OFFSET,
 	.size = ACLINT_MSWI_SIZE,
@@ -90,6 +122,7 @@ static int buckyball_early_init(bool cold_boot)
 {
 	if (cold_boot) {
 		sbi_console_set_device(&buckyball_console);
+		sbi_system_reset_add_device(&buckyball_reset);
 		aclint_mswi_cold_init(&mswi);
 	}
 	return 0;
