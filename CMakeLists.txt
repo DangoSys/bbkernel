@@ -31,6 +31,10 @@ set(CROSS_COMPILE  riscv64-unknown-linux-gnu-)
 set(ARCH           riscv)
 set(NPROC          4)
 
+set(BUCKYBALL_VISIBLE_HART_COUNT 64 CACHE STRING "Linux-visible Buckyball hart count")
+set(BUCKYBALL_TOTAL_HART_COUNT ${BUCKYBALL_VISIBLE_HART_COUNT} CACHE STRING "Total hardware Buckyball hart count")
+set(BUCKYBALL_HIDDEN_HART_BASE ${BUCKYBALL_VISIBLE_HART_COUNT} CACHE STRING "First hidden Buckyball hart id")
+
 set(OPENSBI_FW    ${OUTPUT_DIR}/fw_payload.bin)
 set(BUSYBOX_BIN   ${CMAKE_BINARY_DIR}/busybox/busybox)
 set(ROOTFS_DIR    ${CMAKE_BINARY_DIR}/rootfs)
@@ -149,6 +153,9 @@ add_custom_command(
             PLATFORM=buckyball
             O=${OPENSBI_BUILD_DIR}
             FW_PAYLOAD_PATH=${LINUX_IMAGE_PATH}
+            BUCKYBALL_VISIBLE_HART_COUNT=${BUCKYBALL_VISIBLE_HART_COUNT}
+            BUCKYBALL_TOTAL_HART_COUNT=${BUCKYBALL_TOTAL_HART_COUNT}
+            BUCKYBALL_HIDDEN_HART_BASE=${BUCKYBALL_HIDDEN_HART_BASE}
     DEPENDS ${LINUX_IMAGE_PATH} ${OPENSBI_PLATFORM_SOURCES}
     COMMENT "Building OpenSBI fw_payload with Linux"
     VERBATIM
