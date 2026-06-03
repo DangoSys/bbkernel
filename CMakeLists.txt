@@ -6,8 +6,8 @@
 #   opensbi/  — OpenSBI firmware
 #
 # Outputs (in bb-tests/output/kernel/):
-#   fw_payload.bin — OpenSBI + Linux + initramfs (complete boot image)
-#   fw_payload.hex — Verilog hex format for P2E DDR loading
+#   fw_payload*.bin — OpenSBI + Linux + initramfs (complete boot image)
+#   fw_payload*.hex — Verilog hex format for P2E DDR loading
 #
 # Usage:
 #   cmake -B <build_dir> -S .
@@ -33,9 +33,16 @@ set(NPROC          4)
 
 set(BUCKYBALL_VISIBLE_HART_COUNT 64 CACHE STRING "Linux-visible Buckyball hart count")
 set(BUCKYBALL_TOTAL_HART_COUNT ${BUCKYBALL_VISIBLE_HART_COUNT} CACHE STRING "Total hardware Buckyball hart count")
-set(BUCKYBALL_HIDDEN_HART_BASE ${BUCKYBALL_VISIBLE_HART_COUNT} CACHE STRING "First hidden Buckyball hart id")
+unset(BUCKYBALL_HIDDEN_HART_BASE CACHE)
+set(BUCKYBALL_HIDDEN_HART_BASE ${BUCKYBALL_VISIBLE_HART_COUNT})
 
-set(OPENSBI_FW    ${OUTPUT_DIR}/fw_payload.bin)
+if(BUCKYBALL_VISIBLE_HART_COUNT STREQUAL "64" AND BUCKYBALL_TOTAL_HART_COUNT STREQUAL "64")
+  set(FW_PAYLOAD_NAME fw_payload)
+else()
+  set(FW_PAYLOAD_NAME fw_payload-v${BUCKYBALL_VISIBLE_HART_COUNT}-t${BUCKYBALL_TOTAL_HART_COUNT})
+endif()
+
+set(OPENSBI_FW    ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.bin)
 set(BUSYBOX_BIN   ${CMAKE_BINARY_DIR}/busybox/busybox)
 set(ROOTFS_DIR    ${CMAKE_BINARY_DIR}/rootfs)
 set(ROOTFS_STAMP  ${CMAKE_BINARY_DIR}/rootfs.stamp)
@@ -147,7 +154,7 @@ set(OPENSBI_PLATFORM_SOURCES
 
 add_custom_command(
     OUTPUT  ${OPENSBI_FW_PATH}
-    COMMAND make -C ${OPENSBI_DIR}
+    COMMAND make -B -C ${OPENSBI_DIR}
             CROSS_COMPILE=${CROSS_COMPILE}
             PLATFORM_DIR=${PLATFORM_DIR}
             PLATFORM=buckyball
