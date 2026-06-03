@@ -46,6 +46,7 @@
 #define BUCKYBALL_SCU_UART_RX_VALID 0x01
 #define BUCKYBALL_MTIMER_FREQ 10000000
 #define BUCKYBALL_SIM_EXIT_SUCCESS 0
+#define BUCKYBALL_DTB_STAGING_ADDR 0x88000000UL
 
 #if BUCKYBALL_VISIBLE_HART_COUNT < 1
 #error "BUCKYBALL_VISIBLE_HART_COUNT must be at least 1"
@@ -56,6 +57,31 @@
 #if BUCKYBALL_HIDDEN_HART_BASE < BUCKYBALL_VISIBLE_HART_COUNT
 #error "BUCKYBALL_HIDDEN_HART_BASE must be after visible harts"
 #endif
+
+unsigned long fw_platform_init(unsigned long arg0, unsigned long arg1,
+                               unsigned long arg2, unsigned long arg3,
+                               unsigned long arg4) {
+  void *src = (void *)arg1;
+  void *dst = (void *)BUCKYBALL_DTB_STAGING_ADDR;
+  int size;
+
+  (void)arg0;
+  (void)arg2;
+  (void)arg3;
+  (void)arg4;
+
+  if (!arg1)
+    return arg1;
+
+  if (fdt_check_header(src))
+    return arg1;
+
+  size = fdt_totalsize(src);
+  if (fdt_open_into(src, dst, size) == 0)
+    return BUCKYBALL_DTB_STAGING_ADDR;
+
+  return arg1;
+}
 
 /* SCU console: per-hart UART at base + hartid*stride + offset */
 static void buckyball_console_putc(char ch) {
