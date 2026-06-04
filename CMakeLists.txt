@@ -33,6 +33,7 @@ set(NPROC          4)
 
 set(BUCKYBALL_VISIBLE_HART_COUNT 64 CACHE STRING "Linux-visible Buckyball hart count")
 set(BUCKYBALL_TOTAL_HART_COUNT ${BUCKYBALL_VISIBLE_HART_COUNT} CACHE STRING "Total hardware Buckyball hart count")
+set(BUCKYBALL_KERNEL_MODEL "" CACHE STRING "Single ModelTest model copied into initramfs /root")
 unset(BUCKYBALL_HIDDEN_HART_BASE CACHE)
 set(BUCKYBALL_HIDDEN_HART_BASE ${BUCKYBALL_VISIBLE_HART_COUNT})
 
@@ -75,6 +76,71 @@ add_custom_target(busybox-build DEPENDS ${BUSYBOX_BIN})
 
 # ── initramfs source tree ────────────────────────────────────────────────────
 set(WORKLOADS_OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../output/workloads)
+set(MODEL_OUTPUT_ROOT ${WORKLOADS_OUTPUT_DIR}/src/ModelTest/e2e/models/archs/buckyball)
+set(INSTALL_WORKLOADS_SCRIPT ${KERNEL_DIR}/scripts/install-workloads.sh)
+set(INSTALL_MODEL_SCRIPT ${KERNEL_DIR}/scripts/install-model.sh)
+
+if(BUCKYBALL_KERNEL_MODEL)
+  if(BUCKYBALL_KERNEL_MODEL STREQUAL "bert")
+    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/Bert)
+    set(MODEL_RUN_BINARY buddy-buckyball-bert-run)
+  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "deepseekr1")
+    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/DeepSeekR1)
+    set(MODEL_RUN_BINARY buddy-buckyball-deepseekr1-run)
+  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "gemma4")
+    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/Gemma4)
+    set(MODEL_RUN_BINARY buddy-buckyball-gemma4-run)
+  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "lenet")
+    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/LeNet)
+    set(MODEL_RUN_BINARY buddy-buckyball-lenet-run)
+  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "llama2")
+    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/llama2)
+    set(MODEL_RUN_BINARY buddy-buckyball-llama2-run)
+  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "mobilenet")
+    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/MobileNetV3)
+    set(MODEL_RUN_BINARY buddy-buckyball-mobilenetv3-run)
+  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "qwen3")
+    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/Qwen3)
+    set(MODEL_RUN_BINARY buddy-buckyball-qwen3-run)
+  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "resnet")
+    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/ResNet18)
+    set(MODEL_RUN_BINARY buddy-buckyball-resnet-run)
+  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "stablediffusion")
+    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/StableDiffusion)
+    set(MODEL_RUN_BINARY buddy-buckyball-stablediffusion-run)
+  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "yolo")
+    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/YOLO26)
+    set(MODEL_RUN_BINARY buddy-buckyball-yolo26-run)
+  else()
+    message(FATAL_ERROR
+      "Unknown BUCKYBALL_KERNEL_MODEL='${BUCKYBALL_KERNEL_MODEL}'. "
+      "Valid models: bert, deepseekr1, gemma4, lenet, llama2, mobilenet, "
+      "qwen3, resnet, stablediffusion, yolo")
+  endif()
+
+  if(NOT EXISTS ${MODEL_OUTPUT_DIR})
+    message(FATAL_ERROR
+      "Model output directory not found: ${MODEL_OUTPUT_DIR}. "
+      "Run `bbdev workload --build '--model ${BUCKYBALL_KERNEL_MODEL}'` first.")
+  endif()
+  if(NOT EXISTS ${MODEL_OUTPUT_DIR}/${MODEL_RUN_BINARY})
+    message(FATAL_ERROR
+      "Model run binary not found: ${MODEL_OUTPUT_DIR}/${MODEL_RUN_BINARY}. "
+      "Run `bbdev workload --build '--model ${BUCKYBALL_KERNEL_MODEL}'` first.")
+  endif()
+
+  file(GLOB_RECURSE MODEL_RUNTIME_FILES CONFIGURE_DEPENDS ${MODEL_OUTPUT_DIR}/*)
+  set(INSTALL_RUNTIME_COMMAND
+      bash ${INSTALL_MODEL_SCRIPT}
+      ${MODEL_OUTPUT_DIR}
+      ${MODEL_RUN_BINARY}
+      ${ROOTFS_DIR}/root)
+else()
+  set(INSTALL_RUNTIME_COMMAND
+      bash ${INSTALL_WORKLOADS_SCRIPT}
+      ${WORKLOADS_OUTPUT_DIR}
+      ${ROOTFS_DIR}/root)
+endif()
 
 add_custom_command(
     OUTPUT  ${ROOTFS_STAMP}
@@ -95,14 +161,16 @@ add_custom_command(
     # Copy overlay (init script, etc/)
     COMMAND bash -c "cp -r ${OVERLAY_DIR}/. ${ROOTFS_DIR}/"
     COMMAND chmod +x ${ROOTFS_DIR}/init
-    # Copy workload binaries
-    COMMAND bash ${KERNEL_DIR}/scripts/install-workloads.sh
-            ${WORKLOADS_OUTPUT_DIR} ${ROOTFS_DIR}/root
+    # Copy workload binaries or a single ModelTest runtime.
+    COMMAND ${INSTALL_RUNTIME_COMMAND}
     COMMAND ${CMAKE_COMMAND} -E touch ${ROOTFS_STAMP}
     DEPENDS ${BUSYBOX_BIN}
             ${OVERLAY_DIR}/init
             ${INITRAMFS_DEVNODES}
             ${KERNEL_DIR}/scripts/create-busybox-links.cmake
+            ${INSTALL_WORKLOADS_SCRIPT}
+            ${INSTALL_MODEL_SCRIPT}
+            ${MODEL_RUNTIME_FILES}
     COMMENT "Creating initramfs source tree"
     VERBATIM
 )
