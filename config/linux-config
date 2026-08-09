@@ -1,7 +1,7 @@
 CONFIG_AS_VERSION=23900
 # CONFIG_ATA is not set
 # CONFIG_BACKLIGHT_CLASS_DEVICE is not set
-CONFIG_CMDLINE="console=hvc0 earlycon=sbi loglevel=8 ignore_loglevel"
+CONFIG_CMDLINE="console=hvc0 earlycon=sbi loglevel=8 ignore_loglevel panic=1"
 CONFIG_DEBUG_SECTION_MISMATCH=y
 CONFIG_DEFAULT_HOSTNAME="buckyball"
 CONFIG_DEVTMPFS=y

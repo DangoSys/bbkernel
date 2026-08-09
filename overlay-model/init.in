@@ -26,7 +26,23 @@ cat <<'EOF'
  /_/ /_/\__,_/ |___/\___/    \__,_/   /_.___/\__,_/_/_/
 EOF
 echo ""
-exec /bin/sh -i
+echo "[model] @BUCKYBALL_KERNEL_MODEL@ via /init"
+echo ""
 
-# Per-chip automated /init lives under examples/chips/<chip>/kernel/overlay/init
-# (bbdev kernel --build '--chip <chip>' overlays it for fw_payload-<chip>-pk).
+fail_exit() {
+  echo "$1" >&2
+  reboot -f
+}
+
+cd /root || fail_exit "ERROR: cannot cd /root"
+t=./@MODEL_RUN_BINARY@
+[ -x "$t" ] || fail_exit "ERROR: missing $t"
+echo "RUN @MODEL_RUN_BINARY@"
+set +e
+"$t"
+rc=$?
+set -e
+echo "rc=$rc"
+[ "$rc" -eq 0 ] || fail_exit "FAIL @MODEL_RUN_BINARY@ rc=$rc"
+echo "PASS @MODEL_RUN_BINARY@"
+poweroff -f

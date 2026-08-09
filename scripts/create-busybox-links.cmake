@@ -3,7 +3,7 @@ if(NOT DEFINED ROOTFS_DIR)
 endif()
 
 set(applets
-  sh ash ls cat echo mount umount mkdir rm cp mv ps top free sleep poweroff)
+  sh ash ls cat echo mount umount mkdir rm cp mv ps top free sleep poweroff reboot)
 
 foreach(app IN LISTS applets)
   execute_process(

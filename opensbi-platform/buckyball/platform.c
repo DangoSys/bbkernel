@@ -46,6 +46,7 @@
 #define BUCKYBALL_SCU_UART_RX_VALID 0x01
 #define BUCKYBALL_MTIMER_FREQ 10000000
 #define BUCKYBALL_SIM_EXIT_SUCCESS 0
+#define BUCKYBALL_SIM_EXIT_FAILURE 1
 #define BUCKYBALL_DTB_STAGING_ADDR 0x88000000UL
 // This Enable rdtime and rdcycle (in original opensbi its only rdtime, we eable 
 // rdcylce to do performance counting)
@@ -153,7 +154,12 @@ static struct sbi_console_device buckyball_console = {
 static struct plic_data *plic;
 
 static int buckyball_system_reset_check(u32 type, u32 reason) {
-  if (type == SBI_SRST_RESET_TYPE_SHUTDOWN)
+  (void)reason;
+
+  /* Shutdown and reboot both end the P2E run via SCU sim_exit. */
+  if (type == SBI_SRST_RESET_TYPE_SHUTDOWN ||
+      type == SBI_SRST_RESET_TYPE_COLD_REBOOT ||
+      type == SBI_SRST_RESET_TYPE_WARM_REBOOT)
     return 1;
 
   return 0;
@@ -164,11 +170,17 @@ static void buckyball_system_reset(u32 type, u32 reason) {
   volatile unsigned int *sim_exit =
       (volatile unsigned int *)(BUCKYBALL_SCU_BASE +
                                 hartid * BUCKYBALL_SCU_STRIDE);
+  unsigned int code = BUCKYBALL_SIM_EXIT_FAILURE;
 
-  (void)type;
-  (void)reason;
+  /*
+   * Clean poweroff → exit 0.
+   * Reboot (incl. panic=N restart) or SYSFAIL shutdown → exit 1 so P2E fails.
+   */
+  if (type == SBI_SRST_RESET_TYPE_SHUTDOWN &&
+      reason == SBI_SRST_RESET_REASON_NONE)
+    code = BUCKYBALL_SIM_EXIT_SUCCESS;
 
-  *sim_exit = BUCKYBALL_SIM_EXIT_SUCCESS;
+  *sim_exit = code;
 
   while (1)
     wfi();
