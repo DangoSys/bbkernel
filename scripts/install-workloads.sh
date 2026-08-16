@@ -30,6 +30,8 @@ if [ -n "$ALLOWLIST" ]; then
         echo "[kernel] ERROR: allowlist not found: $ALLOWLIST" >&2
         exit 1
     fi
+    # Allowlist is exclusive: drop stale *-linux left from prior builds.
+    find "$ROOTFS_ROOT" -maxdepth 1 -type f -name '*-linux' -delete
     while IFS= read -r stem || [ -n "$stem" ]; do
         stem=$(echo "$stem" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         [ -n "$stem" ] || continue
