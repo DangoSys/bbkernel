@@ -13,6 +13,7 @@ Memory Layout:
   0x80000000  : OpenSBI fw_payload.bin
                 ├─ 0x80000000: OpenSBI (M-mode, ~256KB)
                 └─ 0x80200000: Linux Image (S-mode, with initramfs)
+  0x8FE00000  : DTB staging area (top 2MB of the first 256MB RAM window)
 
 Boot Flow:
   1. BootROM (M-mode) @ 0x10040

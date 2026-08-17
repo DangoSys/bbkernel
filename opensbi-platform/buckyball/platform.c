@@ -47,7 +47,7 @@
 #define BUCKYBALL_MTIMER_FREQ 10000000
 #define BUCKYBALL_SIM_EXIT_SUCCESS 0
 #define BUCKYBALL_SIM_EXIT_FAILURE 1
-#define BUCKYBALL_DTB_STAGING_ADDR 0x88000000UL
+#define BUCKYBALL_DTB_STAGING_ADDR 0x8FE00000UL
 // This Enable rdtime and rdcycle (in original opensbi its only rdtime, we eable 
 // rdcylce to do performance counting)
 #define BUCKYBALL_SCOUNTEREN_CY_TM 0x03UL
