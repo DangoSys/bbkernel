@@ -105,6 +105,7 @@ add_custom_target(busybox-build DEPENDS ${BUSYBOX_BIN})
 # ── initramfs source tree ────────────────────────────────────────────────────
 set(WORKLOADS_OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../output/workloads)
 set(MODEL_OUTPUT_ROOT ${WORKLOADS_OUTPUT_DIR}/src/ModelTest/e2e/models/archs/buckyball)
+set(MODEL_LAYOUT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../src/ModelTest/e2e/models/archs/buckyball)
 set(INSTALL_WORKLOADS_SCRIPT ${KERNEL_DIR}/scripts/install-workloads.sh)
 set(INSTALL_MODEL_SCRIPT ${KERNEL_DIR}/scripts/install-model.sh)
 set(EXTRACT_TOML_TESTS_SCRIPT ${KERNEL_DIR}/scripts/extract_toml_tests.py)
@@ -130,51 +131,75 @@ endif()
 set(MODEL_INIT "")
 if(BUCKYBALL_KERNEL_MODEL)
   if(BUCKYBALL_KERNEL_MODEL STREQUAL "bert")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/Bert)
+    set(MODEL_LAYOUT_NAME Bert)
     set(MODEL_RUN_BINARY buddy-buckyball-bert-run)
   elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "deepseekr1")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/DeepSeekR1)
+    set(MODEL_LAYOUT_NAME DeepSeekR1)
     set(MODEL_RUN_BINARY buddy-buckyball-deepseekr1-run)
   elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "gemma4")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/Gemma4)
+    set(MODEL_LAYOUT_NAME Gemma4)
     set(MODEL_RUN_BINARY buddy-buckyball-gemma4-run)
   elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "lenet")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/LeNet)
+    set(MODEL_LAYOUT_NAME LeNet)
     set(MODEL_RUN_BINARY buddy-buckyball-lenet-run)
   elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "llama2")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/llama2)
+    set(MODEL_LAYOUT_NAME llama2)
     set(MODEL_RUN_BINARY buddy-buckyball-llama2-run)
   elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "mobilenet")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/MobileNetV3)
+    set(MODEL_LAYOUT_NAME MobileNetV3)
     set(MODEL_RUN_BINARY buddy-buckyball-mobilenetv3-run)
   elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "qwen3")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/Qwen3)
+    set(MODEL_LAYOUT_NAME Qwen3)
     set(MODEL_RUN_BINARY buddy-buckyball-qwen3-run)
   elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "resnet")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/ResNet18)
+    set(MODEL_LAYOUT_NAME ResNet18)
     set(MODEL_RUN_BINARY buddy-buckyball-resnet-run)
-  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "stablediffusion")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/StableDiffusion)
-    set(MODEL_RUN_BINARY buddy-buckyball-stablediffusion-run)
+  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "stable-diffusion" OR
+         BUCKYBALL_KERNEL_MODEL STREQUAL "stablediffusion")
+    set(MODEL_LAYOUT_NAME StableDiffusion)
+    set(MODEL_RUN_BINARY buddy-buckyball-stable-diffusion-run)
   elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "yolo")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/YOLO26)
+    set(MODEL_LAYOUT_NAME YOLO26)
     set(MODEL_RUN_BINARY buddy-buckyball-yolo26-run)
   else()
     message(FATAL_ERROR
       "Unknown BUCKYBALL_KERNEL_MODEL='${BUCKYBALL_KERNEL_MODEL}'. "
       "Valid models: bert, deepseekr1, gemma4, lenet, llama2, mobilenet, "
-      "qwen3, resnet, stablediffusion, yolo")
+      "qwen3, resnet, stable-diffusion, yolo")
   endif()
+
+  # ModelTest outputs are namespaced by compiler chip, for example
+  # archs/buckyball/pebble/LeNet. Resolve the chip from the source layout so
+  # stale outputs in the former chip-less directory can never be packaged.
+  file(GLOB MODEL_LAYOUT_CANDIDATES LIST_DIRECTORIES true
+       "${MODEL_LAYOUT_ROOT}/*/${MODEL_LAYOUT_NAME}")
+  list(FILTER MODEL_LAYOUT_CANDIDATES INCLUDE REGEX "/${MODEL_LAYOUT_NAME}$")
+  list(LENGTH MODEL_LAYOUT_CANDIDATES MODEL_LAYOUT_COUNT)
+  if(MODEL_LAYOUT_COUNT EQUAL 0)
+    message(FATAL_ERROR
+      "No Buckyball chip layout found for model ${BUCKYBALL_KERNEL_MODEL}: "
+      "${MODEL_LAYOUT_ROOT}/*/${MODEL_LAYOUT_NAME}")
+  elseif(NOT MODEL_LAYOUT_COUNT EQUAL 1)
+    message(FATAL_ERROR
+      "Model ${BUCKYBALL_KERNEL_MODEL} has multiple Buckyball chip layouts: "
+      "${MODEL_LAYOUT_CANDIDATES}. Kernel model packaging requires exactly one.")
+  endif()
+  list(GET MODEL_LAYOUT_CANDIDATES 0 MODEL_LAYOUT_DIR)
+  get_filename_component(MODEL_CHIP_DIR ${MODEL_LAYOUT_DIR} DIRECTORY)
+  get_filename_component(MODEL_CHIP ${MODEL_CHIP_DIR} NAME)
+  set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/${MODEL_CHIP}/${MODEL_LAYOUT_NAME})
+  message(STATUS
+    "Buckyball kernel model: ${BUCKYBALL_KERNEL_MODEL} on chip ${MODEL_CHIP}")
 
   if(NOT EXISTS ${MODEL_OUTPUT_DIR})
     message(FATAL_ERROR
       "Model output directory not found: ${MODEL_OUTPUT_DIR}. "
-      "Run `bbdev workload --build '--model ${BUCKYBALL_KERNEL_MODEL}'` first.")
+      "Run `bbdev workload --build '--chip ${MODEL_CHIP} --model ${BUCKYBALL_KERNEL_MODEL}'` first.")
   endif()
   if(NOT EXISTS ${MODEL_OUTPUT_DIR}/${MODEL_RUN_BINARY})
     message(FATAL_ERROR
       "Model run binary not found: ${MODEL_OUTPUT_DIR}/${MODEL_RUN_BINARY}. "
-      "Run `bbdev workload --build '--model ${BUCKYBALL_KERNEL_MODEL}'` first.")
+      "Run `bbdev workload --build '--chip ${MODEL_CHIP} --model ${BUCKYBALL_KERNEL_MODEL}'` first.")
   endif()
 
   if(NOT BUCKYBALL_KERNEL_INTERACTIVE)
