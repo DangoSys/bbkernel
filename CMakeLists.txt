@@ -34,20 +34,24 @@ set(NPROC          4)
 set(BUCKYBALL_VISIBLE_HART_COUNT 64 CACHE STRING "Linux-visible Buckyball hart count")
 set(BUCKYBALL_TOTAL_HART_COUNT ${BUCKYBALL_VISIBLE_HART_COUNT} CACHE STRING "Total hardware Buckyball hart count")
 set(BUCKYBALL_KERNEL_MODEL "" CACHE STRING "Single ModelTest model copied into initramfs /root")
-set(BUCKYBALL_KERNEL_CHIP "" CACHE STRING "Chip name; uses examples/chips/<chip>/kernel OS overlay for pk regression")
+set(BUCKYBALL_KERNEL_CHIP "" CACHE STRING
+  "Chip name; pk overlay when alone, ModelTest path under archs/buckyball/<chip> when with model")
 set(BUCKYBALL_CHIP_KERNEL_DIR "" CACHE PATH "Per-chip kernel dir (overlay/, etc.)")
 set(BUCKYBALL_PK_WORKLOAD_TOML "" CACHE FILEPATH "workloads-pk.toml used to filter *-linux install when chip is set")
+set(BUCKYBALL_MODEL_DATASET "" CACHE STRING
+  "Relative dataset path under /root (e.g. datasets/MNIST); empty = smoke image only")
 option(BUCKYBALL_KERNEL_INTERACTIVE
   "Keep shared /init shell; do not auto-run chip/model workloads" OFF)
 unset(BUCKYBALL_HIDDEN_HART_BASE CACHE)
 set(BUCKYBALL_HIDDEN_HART_BASE ${BUCKYBALL_VISIBLE_HART_COUNT})
 
-if(BUCKYBALL_KERNEL_CHIP AND BUCKYBALL_KERNEL_MODEL)
+if(BUCKYBALL_KERNEL_MODEL AND BUCKYBALL_KERNEL_CHIP STREQUAL "")
   message(FATAL_ERROR
-    "BUCKYBALL_KERNEL_CHIP and BUCKYBALL_KERNEL_MODEL cannot be set together")
+    "BUCKYBALL_KERNEL_CHIP is required when BUCKYBALL_KERNEL_MODEL is set")
 endif()
 
-if(BUCKYBALL_KERNEL_CHIP)
+# pk regression mode: chip alone (no model)
+if(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_MODEL)
   if(BUCKYBALL_CHIP_KERNEL_DIR STREQUAL "")
     message(FATAL_ERROR "BUCKYBALL_CHIP_KERNEL_DIR is required when BUCKYBALL_KERNEL_CHIP is set")
   endif()
@@ -65,10 +69,10 @@ set(FW_PAYLOAD_NAME fw_payload)
 if(NOT BUCKYBALL_VISIBLE_HART_COUNT STREQUAL "64" OR NOT BUCKYBALL_TOTAL_HART_COUNT STREQUAL "64")
   set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-v${BUCKYBALL_VISIBLE_HART_COUNT}-t${BUCKYBALL_TOTAL_HART_COUNT})
 endif()
-if(BUCKYBALL_KERNEL_CHIP)
-  set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-${BUCKYBALL_KERNEL_CHIP}-pk)
-elseif(BUCKYBALL_KERNEL_MODEL)
+if(BUCKYBALL_KERNEL_MODEL)
   set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-${BUCKYBALL_KERNEL_MODEL})
+elseif(BUCKYBALL_KERNEL_CHIP)
+  set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-${BUCKYBALL_KERNEL_CHIP}-pk)
 endif()
 
 set(OPENSBI_FW    ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.bin)
@@ -104,14 +108,18 @@ add_custom_target(busybox-build DEPENDS ${BUSYBOX_BIN})
 
 # ── initramfs source tree ────────────────────────────────────────────────────
 set(WORKLOADS_OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../output/workloads)
-set(MODEL_OUTPUT_ROOT ${WORKLOADS_OUTPUT_DIR}/src/ModelTest/e2e/models/archs/buckyball)
+set(MODEL_OUTPUT_ROOT
+    ${WORKLOADS_OUTPUT_DIR}/src/ModelTest/e2e/models/archs/buckyball/${BUCKYBALL_KERNEL_CHIP})
 set(INSTALL_WORKLOADS_SCRIPT ${KERNEL_DIR}/scripts/install-workloads.sh)
 set(INSTALL_MODEL_SCRIPT ${KERNEL_DIR}/scripts/install-model.sh)
+set(INSTALL_DATASET_SCRIPT ${KERNEL_DIR}/scripts/install-dataset.sh)
+set(MODELTEST_DATASETS_DIR
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/ModelTest/e2e/datasets)
 set(EXTRACT_TOML_TESTS_SCRIPT ${KERNEL_DIR}/scripts/extract_toml_tests.py)
 set(PK_ALLOWLIST ${CMAKE_BINARY_DIR}/pk-workloads.allowlist)
 set(CHIP_INIT "")
 
-if(BUCKYBALL_KERNEL_CHIP)
+if(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_MODEL)
   set(CHIP_INIT ${BUCKYBALL_CHIP_KERNEL_DIR}/overlay/init)
   execute_process(
     COMMAND python3 ${EXTRACT_TOML_TESTS_SCRIPT}
@@ -169,12 +177,36 @@ if(BUCKYBALL_KERNEL_MODEL)
   if(NOT EXISTS ${MODEL_OUTPUT_DIR})
     message(FATAL_ERROR
       "Model output directory not found: ${MODEL_OUTPUT_DIR}. "
-      "Run `bbdev workload --build '--model ${BUCKYBALL_KERNEL_MODEL}'` first.")
+      "Run `bbdev workload --build '--chip ${BUCKYBALL_KERNEL_CHIP} --model ${BUCKYBALL_KERNEL_MODEL}'` first.")
   endif()
   if(NOT EXISTS ${MODEL_OUTPUT_DIR}/${MODEL_RUN_BINARY})
     message(FATAL_ERROR
       "Model run binary not found: ${MODEL_OUTPUT_DIR}/${MODEL_RUN_BINARY}. "
-      "Run `bbdev workload --build '--model ${BUCKYBALL_KERNEL_MODEL}'` first.")
+      "Run `bbdev workload --build '--chip ${BUCKYBALL_KERNEL_CHIP} --model ${BUCKYBALL_KERNEL_MODEL}'` first.")
+  endif()
+
+  set(INSTALL_DATASET_COMMAND bash -c "true")
+  set(MODEL_DATASET_DEPENDS "")
+  if(NOT BUCKYBALL_MODEL_DATASET STREQUAL "")
+    if(BUCKYBALL_MODEL_DATASET MATCHES "^/" OR BUCKYBALL_MODEL_DATASET MATCHES "\\.\\.")
+      message(FATAL_ERROR
+        "BUCKYBALL_MODEL_DATASET must be relative without '..': ${BUCKYBALL_MODEL_DATASET}")
+    endif()
+    string(REGEX REPLACE "^datasets/" "" _DATASET_LEAF "${BUCKYBALL_MODEL_DATASET}")
+    if(_DATASET_LEAF STREQUAL "" OR _DATASET_LEAF STREQUAL "${BUCKYBALL_MODEL_DATASET}")
+      message(FATAL_ERROR
+        "BUCKYBALL_MODEL_DATASET must look like datasets/<name>: ${BUCKYBALL_MODEL_DATASET}")
+    endif()
+    set(HOST_DATASET_DIR ${MODELTEST_DATASETS_DIR}/${_DATASET_LEAF})
+    if(NOT EXISTS ${HOST_DATASET_DIR})
+      message(FATAL_ERROR "Host dataset dir not found: ${HOST_DATASET_DIR}")
+    endif()
+    set(INSTALL_DATASET_COMMAND
+        bash ${INSTALL_DATASET_SCRIPT}
+        ${HOST_DATASET_DIR}
+        ${ROOTFS_DIR}/root
+        ${BUCKYBALL_MODEL_DATASET})
+    file(GLOB_RECURSE MODEL_DATASET_DEPENDS CONFIGURE_DEPENDS ${HOST_DATASET_DIR}/*)
   endif()
 
   if(NOT BUCKYBALL_KERNEL_INTERACTIVE)
@@ -193,6 +225,9 @@ if(BUCKYBALL_KERNEL_MODEL)
       ${MODEL_RUN_BINARY}
       ${ROOTFS_DIR}/root)
 else()
+  set(INSTALL_DATASET_COMMAND bash -c "true")
+  set(MODEL_DATASET_DEPENDS "")
+
   if(BUCKYBALL_KERNEL_CHIP)
     set(INSTALL_RUNTIME_COMMAND
         bash ${INSTALL_WORKLOADS_SCRIPT}
@@ -210,7 +245,7 @@ endif()
 set(OVERLAY_COPY_COMMAND
     bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/")
 set(ROOTFS_EXTRA_DEPENDS ${SHARED_OVERLAY_DIR}/init)
-if(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_INTERACTIVE)
+if(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_MODEL AND NOT BUCKYBALL_KERNEL_INTERACTIVE)
   set(OVERLAY_COPY_COMMAND
       bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/ && cp -r ${BUCKYBALL_CHIP_KERNEL_DIR}/overlay/. ${ROOTFS_DIR}/")
   list(APPEND ROOTFS_EXTRA_DEPENDS
@@ -218,7 +253,7 @@ if(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_INTERACTIVE)
        ${EXTRACT_TOML_TESTS_SCRIPT}
        ${PK_ALLOWLIST}
        ${BUCKYBALL_PK_WORKLOAD_TOML})
-elseif(BUCKYBALL_KERNEL_CHIP)
+elseif(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_MODEL)
   list(APPEND ROOTFS_EXTRA_DEPENDS
        ${EXTRACT_TOML_TESTS_SCRIPT}
        ${PK_ALLOWLIST}
@@ -228,7 +263,8 @@ if(BUCKYBALL_KERNEL_MODEL AND NOT BUCKYBALL_KERNEL_INTERACTIVE)
   set(OVERLAY_COPY_COMMAND
       bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/ && cp ${MODEL_INIT} ${ROOTFS_DIR}/init")
   list(APPEND ROOTFS_EXTRA_DEPENDS ${MODEL_RUNTIME_FILES} ${MODEL_INIT}
-       ${KERNEL_DIR}/overlay-model/init.in)
+       ${KERNEL_DIR}/overlay-model/init.in ${INSTALL_DATASET_SCRIPT}
+       ${MODEL_DATASET_DEPENDS})
 elseif(BUCKYBALL_KERNEL_MODEL)
   list(APPEND ROOTFS_EXTRA_DEPENDS ${MODEL_RUNTIME_FILES})
 endif()
@@ -254,12 +290,14 @@ add_custom_command(
     COMMAND chmod +x ${ROOTFS_DIR}/init
     # Copy workload binaries or a single ModelTest runtime.
     COMMAND ${INSTALL_RUNTIME_COMMAND}
+    COMMAND ${INSTALL_DATASET_COMMAND}
     COMMAND ${CMAKE_COMMAND} -E touch ${ROOTFS_STAMP}
     DEPENDS ${BUSYBOX_BIN}
             ${INITRAMFS_DEVNODES}
             ${KERNEL_DIR}/scripts/create-busybox-links.cmake
             ${INSTALL_WORKLOADS_SCRIPT}
             ${INSTALL_MODEL_SCRIPT}
+            ${INSTALL_DATASET_SCRIPT}
             ${ROOTFS_EXTRA_DEPENDS}
     COMMENT "Creating initramfs source tree"
     VERBATIM
