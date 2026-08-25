@@ -269,6 +269,14 @@ elseif(BUCKYBALL_KERNEL_MODEL)
   list(APPEND ROOTFS_EXTRA_DEPENDS ${MODEL_RUNTIME_FILES})
 endif()
 
+set(BUSYBOX_APPLETS
+    sh ash ls cat echo mount umount mkdir rm cp mv ps top free sleep poweroff reboot)
+set(BUSYBOX_LINK_COMMANDS)
+foreach(APPLET IN LISTS BUSYBOX_APPLETS)
+  list(APPEND BUSYBOX_LINK_COMMANDS
+       COMMAND ${CMAKE_COMMAND} -E create_symlink busybox ${ROOTFS_DIR}/bin/${APPLET})
+endforeach()
+
 add_custom_command(
     OUTPUT  ${ROOTFS_STAMP}
     COMMAND ${CMAKE_COMMAND} -E rm -rf ${ROOTFS_DIR}
@@ -282,9 +290,8 @@ add_custom_command(
                                                ${ROOTFS_DIR}/root
     # Install busybox and create symlinks
     COMMAND ${CMAKE_COMMAND} -E copy ${BUSYBOX_BIN} ${ROOTFS_DIR}/bin/busybox
-    COMMAND ${CMAKE_COMMAND}
-            -DROOTFS_DIR=${ROOTFS_DIR}
-            -P ${KERNEL_DIR}/scripts/create-busybox-links.cmake
+    ${BUSYBOX_LINK_COMMANDS}
+    COMMAND ${CMAKE_COMMAND} -E create_symlink ../bin/busybox ${ROOTFS_DIR}/sbin/init
     # Shared overlay, then optional per-chip OS overlay (init, etc.)
     COMMAND ${OVERLAY_COPY_COMMAND}
     COMMAND chmod +x ${ROOTFS_DIR}/init
@@ -294,7 +301,6 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E touch ${ROOTFS_STAMP}
     DEPENDS ${BUSYBOX_BIN}
             ${INITRAMFS_DEVNODES}
-            ${KERNEL_DIR}/scripts/create-busybox-links.cmake
             ${INSTALL_WORKLOADS_SCRIPT}
             ${INSTALL_MODEL_SCRIPT}
             ${INSTALL_DATASET_SCRIPT}
