@@ -5,7 +5,7 @@
 #   busybox/  — busybox 1.36
 #   opensbi/  — OpenSBI firmware
 #
-# Outputs (in bb-tests/output/kernel/):
+# Outputs (in bb-tests/output/kernel/<chip>/ for chip builds):
 #   fw_payload*.bin — OpenSBI + Linux + initramfs (complete boot image)
 #   fw_payload*.hex — Verilog hex format for P2E DDR loading
 #
@@ -24,8 +24,13 @@ set(OPENSBI_DIR    ${THIRDPARTY_DIR}/opensbi)
 set(CONFIG_DIR     ${KERNEL_DIR}/config)
 set(SHARED_OVERLAY_DIR ${KERNEL_DIR}/overlay)
 set(PLATFORM_DIR   ${KERNEL_DIR}/opensbi-platform)
-# Output goes to bb-tests/output/kernel/ (consistent with other bb-tests outputs)
-set(OUTPUT_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/../../../output/kernel)
+# Keep generic images in output/kernel, and isolate chip-specific images so
+# identically named model payloads from different chips cannot overwrite one
+# another.
+set(OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../output/kernel)
+if(BUCKYBALL_KERNEL_CHIP)
+  set(OUTPUT_DIR ${OUTPUT_DIR}/${BUCKYBALL_KERNEL_CHIP})
+endif()
 
 set(CROSS_COMPILE  riscv64-unknown-linux-gnu-)
 set(ARCH           riscv)
@@ -107,7 +112,8 @@ add_custom_command(
 add_custom_target(busybox-build DEPENDS ${BUSYBOX_BIN})
 
 # ── initramfs source tree ────────────────────────────────────────────────────
-set(WORKLOADS_OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../output/workloads)
+set(WORKLOADS_OUTPUT_DIR
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../output/${BUCKYBALL_KERNEL_CHIP}/workloads)
 set(MODEL_OUTPUT_ROOT
     ${WORKLOADS_OUTPUT_DIR}/src/ModelTest/e2e/models/archs/buckyball/${BUCKYBALL_KERNEL_CHIP})
 set(INSTALL_WORKLOADS_SCRIPT ${KERNEL_DIR}/scripts/install-workloads.sh)
