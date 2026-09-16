@@ -20,6 +20,7 @@
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_system.h>
 #include <sbi_utils/fdt/fdt_helper.h>
+#include <sbi_utils/fdt/fdt_fixup.h>
 #include <sbi_utils/ipi/aclint_mswi.h>
 #include <sbi_utils/irqchip/plic.h>
 #include <sbi_utils/timer/aclint_mtimer.h>
@@ -226,8 +227,12 @@ static int buckyball_early_init(bool cold_boot) {
 }
 
 static int buckyball_final_init(bool cold_boot) {
-  if (cold_boot)
+  if (cold_boot) {
     buckyball_disable_hidden_harts_in_fdt();
+    void *fdt = fdt_get_address_rw();
+    if (fdt)
+      fdt_fixups(fdt);
+  }
 
   return 0;
 }
