@@ -13,7 +13,7 @@
 #   cmake -B <build_dir> -S .
 #   cmake --build <build_dir> --target kernel-build
 #
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.19)
 project(bbkernel NONE)
 
 set(KERNEL_DIR     ${CMAKE_CURRENT_SOURCE_DIR})
@@ -38,9 +38,9 @@ set(NPROC          4)
 
 set(BUCKYBALL_VISIBLE_HART_COUNT 64 CACHE STRING "Linux-visible Buckyball hart count")
 set(BUCKYBALL_TOTAL_HART_COUNT ${BUCKYBALL_VISIBLE_HART_COUNT} CACHE STRING "Total hardware Buckyball hart count")
-set(BUCKYBALL_KERNEL_MODEL "" CACHE STRING "Single ModelTest model copied into initramfs /root")
+set(BUCKYBALL_KERNEL_MODEL "" CACHE STRING "Native model artifact copied into initramfs /root")
 set(BUCKYBALL_KERNEL_CHIP "" CACHE STRING
-  "Chip name; pk overlay when alone, ModelTest path under archs/buckyball/<chip> when with model")
+  "Chip name; pk overlay when alone, model artifact under stack/models/build/<chip> when with model")
 set(BUCKYBALL_CHIP_KERNEL_DIR "" CACHE PATH "Per-chip kernel dir (overlay/, etc.)")
 set(BUCKYBALL_PK_WORKLOAD_TOML "" CACHE FILEPATH "workloads-pk.toml used to filter *-linux install when chip is set")
 set(BUCKYBALL_MODEL_DATASET "" CACHE STRING
@@ -114,13 +114,14 @@ add_custom_target(busybox-build DEPENDS ${BUSYBOX_BIN})
 # ── initramfs source tree ────────────────────────────────────────────────────
 set(WORKLOADS_OUTPUT_DIR
     ${CMAKE_CURRENT_SOURCE_DIR}/../../../output/${BUCKYBALL_KERNEL_CHIP}/workloads)
-set(MODEL_OUTPUT_ROOT
-    ${WORKLOADS_OUTPUT_DIR}/src/ModelTest/e2e/models/archs/buckyball/${BUCKYBALL_KERNEL_CHIP})
+get_filename_component(REPO_ROOT ${KERNEL_DIR}/../../../.. ABSOLUTE)
+set(MODEL_BUILD_DIR ${REPO_ROOT}/stack/models/build/${BUCKYBALL_KERNEL_CHIP}/${BUCKYBALL_KERNEL_MODEL})
+set(MODEL_OUTPUT_DIR ${MODEL_BUILD_DIR}/artifact)
+set(MODEL_RUN_CONFIG ${REPO_ROOT}/examples/models/${BUCKYBALL_KERNEL_CHIP}/${BUCKYBALL_KERNEL_MODEL}/configs/running-param.toml)
 set(INSTALL_WORKLOADS_SCRIPT ${KERNEL_DIR}/scripts/install-workloads.sh)
-set(INSTALL_MODEL_SCRIPT ${KERNEL_DIR}/scripts/install-model.sh)
+set(INSTALL_MODEL_SCRIPT ${KERNEL_DIR}/scripts/install-model.py)
 set(INSTALL_DATASET_SCRIPT ${KERNEL_DIR}/scripts/install-dataset.sh)
-set(MODELTEST_DATASETS_DIR
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/ModelTest/e2e/datasets)
+set(MODEL_DATASETS_DIR ${MODEL_BUILD_DIR}/generated/datasets)
 set(EXTRACT_TOML_TESTS_SCRIPT ${KERNEL_DIR}/scripts/extract_toml_tests.py)
 set(PK_ALLOWLIST ${CMAKE_BINARY_DIR}/pk-workloads.allowlist)
 set(CHIP_INIT "")
@@ -143,53 +144,21 @@ endif()
 
 set(MODEL_INIT "")
 if(BUCKYBALL_KERNEL_MODEL)
-  if(BUCKYBALL_KERNEL_MODEL STREQUAL "bert")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/Bert)
-    set(MODEL_RUN_BINARY buddy-buckyball-bert-run)
-  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "deepseekr1")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/DeepSeekR1)
-    set(MODEL_RUN_BINARY buddy-buckyball-deepseekr1-run)
-  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "gemma4")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/Gemma4)
-    set(MODEL_RUN_BINARY buddy-buckyball-gemma4-run)
-  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "lenet")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/LeNet)
-    set(MODEL_RUN_BINARY buddy-buckyball-lenet-run)
-  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "llama2")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/llama2)
-    set(MODEL_RUN_BINARY buddy-buckyball-llama2-run)
-  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "mobilenet")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/MobileNetV3)
-    set(MODEL_RUN_BINARY buddy-buckyball-mobilenetv3-run)
-  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "qwen3")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/Qwen3)
-    set(MODEL_RUN_BINARY buddy-buckyball-qwen3-run)
-  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "resnet")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/ResNet18)
-    set(MODEL_RUN_BINARY buddy-buckyball-resnet-run)
-  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "stablediffusion")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/StableDiffusion)
-    set(MODEL_RUN_BINARY buddy-buckyball-stablediffusion-run)
-  elseif(BUCKYBALL_KERNEL_MODEL STREQUAL "yolo")
-    set(MODEL_OUTPUT_DIR ${MODEL_OUTPUT_ROOT}/YOLO26)
-    set(MODEL_RUN_BINARY buddy-buckyball-yolo26-run)
-  else()
-    message(FATAL_ERROR
-      "Unknown BUCKYBALL_KERNEL_MODEL='${BUCKYBALL_KERNEL_MODEL}'. "
-      "Valid models: bert, deepseekr1, gemma4, lenet, llama2, mobilenet, "
-      "qwen3, resnet, stablediffusion, yolo")
+  if(NOT EXISTS ${MODEL_OUTPUT_DIR}/layout.json)
+    message(FATAL_ERROR "Model artifact missing: ${MODEL_OUTPUT_DIR}; run bbdev model --build first")
   endif()
-
-  if(NOT EXISTS ${MODEL_OUTPUT_DIR})
-    message(FATAL_ERROR
-      "Model output directory not found: ${MODEL_OUTPUT_DIR}. "
-      "Run `bbdev workload --build '--chip ${BUCKYBALL_KERNEL_CHIP} --model ${BUCKYBALL_KERNEL_MODEL}'` first.")
+  file(READ ${MODEL_OUTPUT_DIR}/layout.json MODEL_LAYOUT)
+  string(JSON MODEL_EXECUTION GET "${MODEL_LAYOUT}" execution kind)
+  if(NOT MODEL_EXECUTION STREQUAL "native")
+    message(FATAL_ERROR "Kernel model images require a native artifact; Python serving runs on the host")
   endif()
-  if(NOT EXISTS ${MODEL_OUTPUT_DIR}/${MODEL_RUN_BINARY})
-    message(FATAL_ERROR
-      "Model run binary not found: ${MODEL_OUTPUT_DIR}/${MODEL_RUN_BINARY}. "
-      "Run `bbdev workload --build '--chip ${BUCKYBALL_KERNEL_CHIP} --model ${BUCKYBALL_KERNEL_MODEL}'` first.")
+  file(GLOB MODEL_PROGRAMS ${MODEL_OUTPUT_DIR}/*-run)
+  list(LENGTH MODEL_PROGRAMS MODEL_PROGRAM_COUNT)
+  if(NOT MODEL_PROGRAM_COUNT EQUAL 1)
+    message(FATAL_ERROR "Expected one model executable in ${MODEL_OUTPUT_DIR}")
   endif()
+  list(GET MODEL_PROGRAMS 0 MODEL_PROGRAM)
+  get_filename_component(MODEL_RUN_BINARY ${MODEL_PROGRAM} NAME)
 
   set(INSTALL_DATASET_COMMAND bash -c "true")
   set(MODEL_DATASET_DEPENDS "")
@@ -198,12 +167,11 @@ if(BUCKYBALL_KERNEL_MODEL)
       message(FATAL_ERROR
         "BUCKYBALL_MODEL_DATASET must be relative without '..': ${BUCKYBALL_MODEL_DATASET}")
     endif()
-    string(REGEX REPLACE "^datasets/" "" _DATASET_LEAF "${BUCKYBALL_MODEL_DATASET}")
-    if(_DATASET_LEAF STREQUAL "" OR _DATASET_LEAF STREQUAL "${BUCKYBALL_MODEL_DATASET}")
+    if(NOT BUCKYBALL_MODEL_DATASET MATCHES "^datasets/.+")
       message(FATAL_ERROR
         "BUCKYBALL_MODEL_DATASET must look like datasets/<name>: ${BUCKYBALL_MODEL_DATASET}")
     endif()
-    set(HOST_DATASET_DIR ${MODELTEST_DATASETS_DIR}/${_DATASET_LEAF})
+    set(HOST_DATASET_DIR ${MODEL_DATASETS_DIR})
     if(NOT EXISTS ${HOST_DATASET_DIR})
       message(FATAL_ERROR "Host dataset dir not found: ${HOST_DATASET_DIR}")
     endif()
@@ -225,11 +193,14 @@ if(BUCKYBALL_KERNEL_MODEL)
   endif()
 
   file(GLOB_RECURSE MODEL_RUNTIME_FILES CONFIGURE_DEPENDS ${MODEL_OUTPUT_DIR}/*)
+  list(APPEND MODEL_RUNTIME_FILES ${MODEL_RUN_CONFIG})
   set(INSTALL_RUNTIME_COMMAND
-      bash ${INSTALL_MODEL_SCRIPT}
+      python3 ${INSTALL_MODEL_SCRIPT}
       ${MODEL_OUTPUT_DIR}
       ${MODEL_RUN_BINARY}
-      ${ROOTFS_DIR}/root)
+      ${ROOTFS_DIR}/root
+      ${MODEL_RUN_CONFIG}
+      "--dataset=${BUCKYBALL_MODEL_DATASET}")
 else()
   set(INSTALL_DATASET_COMMAND bash -c "true")
   set(MODEL_DATASET_DEPENDS "")
@@ -301,7 +272,7 @@ add_custom_command(
     # Shared overlay, then optional per-chip OS overlay (init, etc.)
     COMMAND ${OVERLAY_COPY_COMMAND}
     COMMAND chmod +x ${ROOTFS_DIR}/init
-    # Copy workload binaries or a single ModelTest runtime.
+    # Copy workload binaries or a single model runtime.
     COMMAND ${INSTALL_RUNTIME_COMMAND}
     COMMAND ${INSTALL_DATASET_COMMAND}
     COMMAND ${CMAKE_COMMAND} -E touch ${ROOTFS_STAMP}

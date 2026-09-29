@@ -35,7 +35,7 @@ fail_exit() {
 }
 
 cd /root || fail_exit "ERROR: cannot cd /root"
-t=./@MODEL_RUN_BINARY@
+t=./run-model
 [ -x "$t" ] || fail_exit "ERROR: missing $t"
 echo "RUN @MODEL_RUN_BINARY@"
 set +e
