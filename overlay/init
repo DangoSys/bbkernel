@@ -27,6 +27,3 @@ cat <<'EOF'
 EOF
 echo ""
 exec /bin/sh -i
-
-# Per-chip automated /init lives under examples/chips/<chip>/kernel/overlay/init
-# (bbdev kernel --build '--chip <chip>' overlays it for fw_payload-<chip>-pk).

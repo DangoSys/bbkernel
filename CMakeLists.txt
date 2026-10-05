@@ -34,7 +34,7 @@ endif()
 
 set(CROSS_COMPILE  riscv64-unknown-linux-gnu-)
 set(ARCH           riscv)
-set(NPROC          4)
+set(NPROC          100)
 
 set(BUCKYBALL_VISIBLE_HART_COUNT 64 CACHE STRING "Linux-visible Buckyball hart count")
 set(BUCKYBALL_TOTAL_HART_COUNT ${BUCKYBALL_VISIBLE_HART_COUNT} CACHE STRING "Total hardware Buckyball hart count")
@@ -65,9 +65,8 @@ if(BUCKYBALL_MODEL_STORAGE STREQUAL "pmem")
   math(EXPR BUCKYBALL_PMEM_SIZE "17179869184 - ${BUCKYBALL_GUEST_MEMORY_BYTES}")
 endif()
 set(BUCKYBALL_KERNEL_CHIP "" CACHE STRING
-  "Chip name; pk overlay when alone, model artifact under stack/models/build/<chip> when with model")
-set(BUCKYBALL_CHIP_KERNEL_DIR "" CACHE PATH "Per-chip kernel dir (overlay/, etc.)")
-set(BUCKYBALL_PK_WORKLOAD_TOML "" CACHE FILEPATH "workloads-pk.toml used to filter *-linux install when chip is set")
+  "Chip name; Linux overlay when alone, model artifact under stack/models/build/<chip> when with model")
+set(BUCKYBALL_WORKLOAD_TOML "" CACHE FILEPATH "Chip kernel/workloads.toml listing Linux programs installed into rootfs")
 set(BUCKYBALL_MODEL_DATASET "" CACHE STRING
   "Relative dataset path under /root (e.g. datasets/MNIST); empty = smoke image only")
 option(BUCKYBALL_KERNEL_INTERACTIVE
@@ -80,18 +79,11 @@ if(BUCKYBALL_KERNEL_MODEL AND BUCKYBALL_KERNEL_CHIP STREQUAL "")
     "BUCKYBALL_KERNEL_CHIP is required when BUCKYBALL_KERNEL_MODEL is set")
 endif()
 
-# pk regression mode: chip alone (no model)
+# Linux regression mode: chip alone (no model)
 if(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_MODEL)
-  if(BUCKYBALL_CHIP_KERNEL_DIR STREQUAL "")
-    message(FATAL_ERROR "BUCKYBALL_CHIP_KERNEL_DIR is required when BUCKYBALL_KERNEL_CHIP is set")
-  endif()
-  if(NOT EXISTS ${BUCKYBALL_CHIP_KERNEL_DIR}/overlay/init)
+  if(BUCKYBALL_WORKLOAD_TOML STREQUAL "" OR NOT EXISTS ${BUCKYBALL_WORKLOAD_TOML})
     message(FATAL_ERROR
-      "Chip OS overlay init not found: ${BUCKYBALL_CHIP_KERNEL_DIR}/overlay/init")
-  endif()
-  if(BUCKYBALL_PK_WORKLOAD_TOML STREQUAL "" OR NOT EXISTS ${BUCKYBALL_PK_WORKLOAD_TOML})
-    message(FATAL_ERROR
-      "BUCKYBALL_PK_WORKLOAD_TOML missing or not found: ${BUCKYBALL_PK_WORKLOAD_TOML}")
+      "BUCKYBALL_WORKLOAD_TOML missing or not found: ${BUCKYBALL_WORKLOAD_TOML}")
   endif()
 endif()
 
@@ -102,7 +94,7 @@ endif()
 if(BUCKYBALL_KERNEL_MODEL)
   set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-${BUCKYBALL_KERNEL_MODEL})
 elseif(BUCKYBALL_KERNEL_CHIP)
-  set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-${BUCKYBALL_KERNEL_CHIP}-pk)
+  set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-${BUCKYBALL_KERNEL_CHIP}-linux)
 endif()
 
 if(NOT BUCKYBALL_GUEST_MEMORY_MIB STREQUAL "512")
@@ -167,21 +159,24 @@ set(INSTALL_MODEL_SCRIPT ${KERNEL_DIR}/scripts/install-model.py)
 set(INSTALL_DATASET_SCRIPT ${KERNEL_DIR}/scripts/install-dataset.sh)
 set(MODEL_DATASETS_DIR ${MODEL_BUILD_DIR}/generated/datasets)
 set(EXTRACT_TOML_TESTS_SCRIPT ${KERNEL_DIR}/scripts/extract_toml_tests.py)
-set(PK_ALLOWLIST ${CMAKE_BINARY_DIR}/pk-workloads.allowlist)
+set(USER_ALLOWLIST ${CMAKE_BINARY_DIR}/user-workloads.allowlist)
+set(USER_BINDINGS ${CMAKE_BINARY_DIR}/user-workloads.tsv)
+set(CHIP_PLACEMENT ${KERNEL_DIR}/../../../../examples/chips/${BUCKYBALL_KERNEL_CHIP}/configs/generated/config/derived.json)
 set(CHIP_INIT "")
 
 if(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_MODEL)
-  set(CHIP_INIT ${BUCKYBALL_CHIP_KERNEL_DIR}/overlay/init)
+  set(CHIP_INIT ${SHARED_OVERLAY_DIR}/init-workloads)
   execute_process(
     COMMAND python3 ${EXTRACT_TOML_TESTS_SCRIPT}
-            ${BUCKYBALL_PK_WORKLOAD_TOML}
-            ${PK_ALLOWLIST}
+            ${BUCKYBALL_WORKLOAD_TOML}
+            ${USER_ALLOWLIST} --suffix=-linux
+            --placement ${CHIP_PLACEMENT} --bindings ${USER_BINDINGS}
     RESULT_VARIABLE _extract_rc
     OUTPUT_VARIABLE _extract_out
     ERROR_VARIABLE _extract_err)
   if(NOT _extract_rc EQUAL 0)
     message(FATAL_ERROR
-      "Failed to extract pk workload list from ${BUCKYBALL_PK_WORKLOAD_TOML}:\n${_extract_err}")
+      "Failed to extract user workload list from ${BUCKYBALL_WORKLOAD_TOML}:\n${_extract_err}")
   endif()
   message(STATUS "${_extract_out}")
 endif()
@@ -349,7 +344,7 @@ else()
         bash ${INSTALL_WORKLOADS_SCRIPT}
         ${WORKLOADS_OUTPUT_DIR}
         ${ROOTFS_DIR}/root
-        ${PK_ALLOWLIST})
+        ${USER_ALLOWLIST})
   else()
     set(INSTALL_RUNTIME_COMMAND
         bash ${INSTALL_WORKLOADS_SCRIPT}
@@ -363,17 +358,21 @@ set(OVERLAY_COPY_COMMAND
 set(ROOTFS_EXTRA_DEPENDS ${SHARED_OVERLAY_DIR}/init)
 if(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_MODEL AND NOT BUCKYBALL_KERNEL_INTERACTIVE)
   set(OVERLAY_COPY_COMMAND
-      bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/ && cp -r ${BUCKYBALL_CHIP_KERNEL_DIR}/overlay/. ${ROOTFS_DIR}/")
+      bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/ && cp ${CHIP_INIT} ${ROOTFS_DIR}/init && cp ${USER_BINDINGS} ${ROOTFS_DIR}/root/workload-harts.tsv")
   list(APPEND ROOTFS_EXTRA_DEPENDS
        ${CHIP_INIT}
        ${EXTRACT_TOML_TESTS_SCRIPT}
-       ${PK_ALLOWLIST}
-       ${BUCKYBALL_PK_WORKLOAD_TOML})
+       ${USER_ALLOWLIST}
+       ${USER_BINDINGS}
+       ${CHIP_PLACEMENT}
+       ${BUCKYBALL_WORKLOAD_TOML})
 elseif(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_MODEL)
   list(APPEND ROOTFS_EXTRA_DEPENDS
        ${EXTRACT_TOML_TESTS_SCRIPT}
-       ${PK_ALLOWLIST}
-       ${BUCKYBALL_PK_WORKLOAD_TOML})
+       ${USER_ALLOWLIST}
+       ${USER_BINDINGS}
+       ${CHIP_PLACEMENT}
+       ${BUCKYBALL_WORKLOAD_TOML})
 endif()
 if(BUCKYBALL_KERNEL_MODEL AND NOT BUCKYBALL_KERNEL_INTERACTIVE)
   set(OVERLAY_COPY_COMMAND
@@ -433,6 +432,10 @@ add_custom_target(rootfs-build DEPENDS ${ROOTFS_STAMP})
 set(LINUX_BUILD_DIR ${CMAKE_BINARY_DIR}/linux)
 set(LINUX_IMAGE_PATH ${LINUX_BUILD_DIR}/arch/riscv/boot/Image)
 file(READ ${CONFIG_DIR}/linux-config KERNEL_CONFIG)
+if(BUCKYBALL_VISIBLE_HART_COUNT GREATER 1)
+  string(REGEX REPLACE "CONFIG_NR_CPUS=[0-9]+" "CONFIG_NR_CPUS=${BUCKYBALL_VISIBLE_HART_COUNT}" KERNEL_CONFIG "${KERNEL_CONFIG}")
+  string(APPEND KERNEL_CONFIG "\nCONFIG_SMP=y\n")
+endif()
 string(REPLACE "mem=512M" "mem=${BUCKYBALL_GUEST_MEMORY_MIB}M" KERNEL_CONFIG "${KERNEL_CONFIG}")
 if(MODEL_EXECUTION STREQUAL "host-worker")
   string(REPLACE "loglevel=8 ignore_loglevel" "loglevel=0" KERNEL_CONFIG "${KERNEL_CONFIG}")
@@ -525,7 +528,7 @@ set(OPENSBI_PLATFORM_SOURCES
 
 add_custom_command(
     OUTPUT  ${OPENSBI_FW_PATH}
-    COMMAND make -B -C ${OPENSBI_DIR}
+    COMMAND make -B -j${NPROC} -C ${OPENSBI_DIR}
             CROSS_COMPILE=${CROSS_COMPILE}
             PLATFORM_DIR=${PLATFORM_DIR}
             PLATFORM=buckyball

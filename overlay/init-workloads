@@ -1,0 +1,66 @@
+#!/bin/sh
+set -e
+
+[ -c /dev/console ] || {
+  echo "ERROR: /dev/console is missing or not a character device" >&2
+  exit 1
+}
+
+[ -c /dev/null ] || {
+  echo "ERROR: /dev/null is missing or not a character device" >&2
+  exit 1
+}
+
+exec </dev/console >/dev/console 2>&1
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+
+echo "Linux workload regression"
+
+# Failures use reboot -f → OpenSBI sim_exit=1. Do not exit (kills init → panic loop).
+fail_exit() {
+  echo "$1" >&2
+  reboot -f
+}
+
+count=0
+failed=0
+fails=""
+for t in /root/*-linux; do
+  [ -e "$t" ] || continue
+  name=${t##*/}
+  hart=$(/bin/busybox awk -v name="$name" '$2 == name { print $1 }' /root/workload-harts.tsv)
+  [ -n "$hart" ] || fail_exit "ERROR: no target hart for $name"
+  cpu=$(/bin/busybox awk -v wanted="$hart" '
+    $1 == "processor" { cpu = $3 }
+    $1 == "hart" && $3 == wanted { print cpu }
+  ' /proc/cpuinfo)
+  [ -n "$cpu" ] || fail_exit "ERROR: target hart $hart for $name is not Linux-visible; runtime offload is required"
+  echo "RUN $name hart=$hart cpu=$cpu"
+  set +e
+  /bin/busybox taskset -c "$cpu" "$t"
+  rc=$?
+  set -e
+  count=$((count + 1))
+  if [ "$rc" -ne 0 ]; then
+    echo "FAIL $name rc=$rc"
+    failed=$((failed + 1))
+    fails="$fails $name"
+  else
+    echo "PASS $name"
+  fi
+done
+
+if [ "$count" -eq 0 ]; then
+  fail_exit "ERROR: no *-linux tests installed under /root"
+fi
+
+echo "SUMMARY total=$count passed=$((count - failed)) failed=$failed"
+if [ "$failed" -ne 0 ]; then
+  fail_exit "FAILED_TESTS:$fails"
+fi
+
+echo "ALL_PASS count=$count"
+poweroff -f

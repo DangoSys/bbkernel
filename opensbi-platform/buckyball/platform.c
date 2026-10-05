@@ -274,6 +274,12 @@ static int buckyball_final_init(bool cold_boot) {
       return SBI_EINVAL;
     }
     fdt_fixups(fdt);
+    // The staging area is 256 KiB; hand Linux the packed tree so it does not checksum the slack.
+    err = fdt_pack(fdt);
+    if (err) {
+      sbi_printf("Buckyball: DTB pack failed: %s\n", fdt_strerror(err));
+      return SBI_EINVAL;
+    }
   }
 
   return 0;
