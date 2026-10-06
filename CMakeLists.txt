@@ -435,6 +435,8 @@ file(READ ${CONFIG_DIR}/linux-config KERNEL_CONFIG)
 if(BUCKYBALL_VISIBLE_HART_COUNT GREATER 1)
   string(REGEX REPLACE "CONFIG_NR_CPUS=[0-9]+" "CONFIG_NR_CPUS=${BUCKYBALL_VISIBLE_HART_COUNT}" KERNEL_CONFIG "${KERNEL_CONFIG}")
   string(APPEND KERNEL_CONFIG "\nCONFIG_SMP=y\n")
+else()
+  string(APPEND KERNEL_CONFIG "\n# CONFIG_SMP is not set\n")
 endif()
 string(REPLACE "mem=512M" "mem=${BUCKYBALL_GUEST_MEMORY_MIB}M" KERNEL_CONFIG "${KERNEL_CONFIG}")
 if(MODEL_EXECUTION STREQUAL "host-worker")
@@ -453,9 +455,10 @@ add_custom_command(
             CROSS_COMPILE=${CROSS_COMPILE}
             O=${LINUX_BUILD_DIR}
             defconfig
-    COMMAND ${CMAKE_COMMAND} -E copy
-            ${CMAKE_BINARY_DIR}/linux-config
+    COMMAND ${LINUX_DIR}/scripts/kconfig/merge_config.sh -m
+            -O ${LINUX_BUILD_DIR}
             ${LINUX_BUILD_DIR}/.config
+            ${CMAKE_BINARY_DIR}/linux-config
     # Set initramfs source to rootfs directory plus device-node spec.
     COMMAND bash -c "echo 'CONFIG_INITRAMFS_SOURCE=\"${ROOTFS_DIR} ${INITRAMFS_DEVNODES}\"' >> ${LINUX_BUILD_DIR}/.config"
     COMMAND make -C ${LINUX_DIR}
@@ -483,7 +486,8 @@ add_custom_target(linux-build DEPENDS ${LINUX_IMAGE_PATH})
 # ── device tree ──────────────────────────────────────────────────────────────
 # The BootROM passes no DTB: OpenSBI takes this one, generated from the chip PB, from its payload.
 # The workload build also configures this project without a chip; only fw_payload needs one.
-set(BUCKYBALL_TIMEBASE_HZ 5000000 CACHE STRING "SoC clock that advances CLINT mtime (P2E user_clk)")
+unset(BUCKYBALL_TIMEBASE_HZ CACHE)
+set(BUCKYBALL_TIMEBASE_HZ 5000) # 5 MHz SoC clock / 1000 RTC divider.
 if(BUCKYBALL_KERNEL_CHIP)
   find_program(PYTHON3 python3 REQUIRED)
   find_program(DTC dtc REQUIRED)

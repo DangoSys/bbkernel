@@ -2,8 +2,8 @@
 """Generate the Linux device tree for a chip from its Chip.pb.
 
 Every hart in the PB is listed; OpenSBI marks the hidden ones disabled at boot. Device addresses
-follow the System's DeviceParams and SCU defaults (CLINT, PLIC, SCU), and the timebase is the
-SoC clock because the CLINT advances mtime once per cycle.
+follow the System's DeviceParams and SCU defaults (CLINT, PLIC, SCU). The timebase is the
+RTC tick frequency after the CLINT clock divider.
 """
 
 import argparse

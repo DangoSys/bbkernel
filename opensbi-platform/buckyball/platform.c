@@ -305,7 +305,7 @@ static int buckyball_irqchip_init(void) {
   return plic_cold_irqchip_init(plic);
 }
 
-/* mtime counts SoC cycles; the device tree timebase states that clock. */
+/* mtime counts divided RTC ticks; the device tree reports that frequency. */
 static int buckyball_timer_init(void) {
   unsigned long freq;
   int err = fdt_parse_timebase_frequency(fdt_get_address(), &freq);
