@@ -16,6 +16,8 @@ platform-ldflags-y =
 
 platform-objs-y += platform.o task-worker.o
 
+$(platform_build_dir)/task-worker.dep $(platform_build_dir)/task-worker.o: $(KCONFIG_AUTOHEADER)
+
 PLATFORM_RISCV_XLEN = 64
 PLATFORM_RISCV_ABI = lp64d
 PLATFORM_RISCV_ISA = rv64gc
