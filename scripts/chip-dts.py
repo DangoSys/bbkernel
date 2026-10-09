@@ -46,12 +46,15 @@ def cells(value: int) -> str:
 
 
 def generate(chip, guest_bytes: int, timebase_hz: int) -> str:
-    indices = list(chip.tiles[0].core_indices)
-    for tile in chip.tiles[1:]:
-        if not tile.HasField("controller_core_index") or tile.controller_core_index not in tile.core_indices:
-            raise SystemExit("compute tile needs an explicit controller core")
-        indices.append(tile.controller_core_index)
-    harts = sorted((chip.cores[index] for index in indices), key=lambda core: core.hart_id)
+    harts = []
+    for core in chip.cores:
+        if core.cpu.WhichOneof("cpu") == "ant":
+            continue
+        isa(core)
+        if not core.HasField("hart_id"):
+            raise SystemExit(f"system CPU {core.index} needs an explicit hart id")
+        harts.append(core)
+    harts.sort(key=lambda core: core.hart_id)
     if [core.hart_id for core in harts] != list(range(len(harts))):
         raise SystemExit("Linux control hart ids must be contiguous from zero")
     cpus = []
