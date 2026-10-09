@@ -36,33 +36,35 @@ set(CROSS_COMPILE  riscv64-unknown-linux-gnu-)
 set(ARCH           riscv)
 set(NPROC          100)
 
-set(BUCKYBALL_VISIBLE_HART_COUNT 64 CACHE STRING "Linux-visible Buckyball hart count")
-set(BUCKYBALL_TOTAL_HART_COUNT ${BUCKYBALL_VISIBLE_HART_COUNT} CACHE STRING "Total hardware Buckyball hart count")
+set(BUCKYBALL_HART_COUNT 64 CACHE STRING "Linux-visible Buckyball hart count")
+if(NOT BUCKYBALL_HART_COUNT MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "BUCKYBALL_HART_COUNT must be a positive integer")
+endif()
 set(BUCKYBALL_KERNEL_MODEL "" CACHE STRING "Model artifact copied into initramfs /root")
 set(BUCKYBALL_GUEST_MEMORY_MIB 512 CACHE STRING "Linux guest memory budget in MiB")
 if(NOT BUCKYBALL_GUEST_MEMORY_MIB MATCHES "^[1-9][0-9]*$" OR BUCKYBALL_GUEST_MEMORY_MIB GREATER 16384)
   message(FATAL_ERROR "BUCKYBALL_GUEST_MEMORY_MIB must be in 1..16384 (P2E DDR capacity)")
 endif()
 set(MEMORY_BUDGET_SCRIPT ${KERNEL_DIR}/scripts/memory-budget.py)
-set(BUCKYBALL_MODEL_STORAGE initramfs CACHE STRING "Model storage: initramfs or pmem")
-if(NOT BUCKYBALL_MODEL_STORAGE MATCHES "^(initramfs|pmem)$")
-  message(FATAL_ERROR "BUCKYBALL_MODEL_STORAGE must be initramfs or pmem")
+set(BUCKYBALL_MODEL_STORAGE initramfs CACHE STRING "Model storage: initramfs or ddr")
+if(NOT BUCKYBALL_MODEL_STORAGE MATCHES "^(initramfs|ddr)$")
+  message(FATAL_ERROR "BUCKYBALL_MODEL_STORAGE must be initramfs or ddr")
 endif()
-if(BUCKYBALL_MODEL_STORAGE STREQUAL "pmem" AND NOT BUCKYBALL_KERNEL_MODEL)
-  message(FATAL_ERROR "pmem storage requires a model")
+if(BUCKYBALL_MODEL_STORAGE STREQUAL "ddr" AND NOT BUCKYBALL_KERNEL_MODEL)
+  message(FATAL_ERROR "ddr storage requires a model")
 endif()
-set(PMEM_SCRIPT ${KERNEL_DIR}/scripts/pmem-image.py)
+set(MODEL_DDR_SCRIPT ${KERNEL_DIR}/scripts/model-image.py)
 math(EXPR BUCKYBALL_GUEST_MEMORY_BYTES "${BUCKYBALL_GUEST_MEMORY_MIB} * 1048576")
 set(BUCKYBALL_FDT_SIZE 262144)
 math(EXPR BUCKYBALL_FDT_ADDR "2147483648 + ${BUCKYBALL_GUEST_MEMORY_BYTES} - ${BUCKYBALL_FDT_SIZE}")
-set(BUCKYBALL_PMEM_BASE 0)
-set(BUCKYBALL_PMEM_SIZE 0)
-if(BUCKYBALL_MODEL_STORAGE STREQUAL "pmem")
+set(BUCKYBALL_MODEL_DDR_BASE 0)
+set(BUCKYBALL_MODEL_DDR_SIZE 0)
+if(BUCKYBALL_MODEL_STORAGE STREQUAL "ddr")
   if(BUCKYBALL_GUEST_MEMORY_MIB GREATER_EQUAL 16384)
-    message(FATAL_ERROR "pmem requires reserved DDR beyond the Linux guest memory")
+    message(FATAL_ERROR "ddr requires reserved DDR beyond the Linux guest memory")
   endif()
-  math(EXPR BUCKYBALL_PMEM_BASE "2147483648 + ${BUCKYBALL_GUEST_MEMORY_BYTES}")
-  math(EXPR BUCKYBALL_PMEM_SIZE "17179869184 - ${BUCKYBALL_GUEST_MEMORY_BYTES}")
+  math(EXPR BUCKYBALL_MODEL_DDR_BASE "2147483648 + ${BUCKYBALL_GUEST_MEMORY_BYTES}")
+  math(EXPR BUCKYBALL_MODEL_DDR_SIZE "17179869184 - ${BUCKYBALL_GUEST_MEMORY_BYTES}")
 endif()
 set(BUCKYBALL_KERNEL_CHIP "" CACHE STRING
   "Chip name; Linux overlay when alone, model artifact under stack/models/build/<chip> when with model")
@@ -71,8 +73,6 @@ set(BUCKYBALL_MODEL_DATASET "" CACHE STRING
   "Relative dataset path under /root (e.g. datasets/MNIST); empty = smoke image only")
 option(BUCKYBALL_KERNEL_INTERACTIVE
   "Keep shared /init shell; do not auto-run chip/model workloads" OFF)
-unset(BUCKYBALL_HIDDEN_HART_BASE CACHE)
-set(BUCKYBALL_HIDDEN_HART_BASE ${BUCKYBALL_VISIBLE_HART_COUNT})
 
 if(BUCKYBALL_KERNEL_MODEL AND BUCKYBALL_KERNEL_CHIP STREQUAL "")
   message(FATAL_ERROR
@@ -88,8 +88,8 @@ if(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_MODEL)
 endif()
 
 set(FW_PAYLOAD_NAME fw_payload)
-if(NOT BUCKYBALL_VISIBLE_HART_COUNT STREQUAL "64" OR NOT BUCKYBALL_TOTAL_HART_COUNT STREQUAL "64")
-  set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-v${BUCKYBALL_VISIBLE_HART_COUNT}-t${BUCKYBALL_TOTAL_HART_COUNT})
+if(NOT BUCKYBALL_HART_COUNT STREQUAL "64")
+  set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-h${BUCKYBALL_HART_COUNT})
 endif()
 if(BUCKYBALL_KERNEL_MODEL)
   set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-${BUCKYBALL_KERNEL_MODEL})
@@ -100,8 +100,8 @@ endif()
 if(NOT BUCKYBALL_GUEST_MEMORY_MIB STREQUAL "512")
   set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-mem${BUCKYBALL_GUEST_MEMORY_MIB}M)
 endif()
-if(BUCKYBALL_MODEL_STORAGE STREQUAL "pmem")
-  set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-pmem)
+if(BUCKYBALL_MODEL_STORAGE STREQUAL "ddr")
+  set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-ddr)
 endif()
 set(OPENSBI_FW    ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.bin)
 set(BUSYBOX_BIN   ${CMAKE_BINARY_DIR}/busybox/busybox)
@@ -141,21 +141,8 @@ get_filename_component(REPO_ROOT ${KERNEL_DIR}/../../../.. ABSOLUTE)
 set(MODEL_BUILD_DIR ${REPO_ROOT}/stack/models/build/${BUCKYBALL_KERNEL_CHIP}/${BUCKYBALL_KERNEL_MODEL})
 set(MODEL_OUTPUT_DIR ${MODEL_BUILD_DIR}/artifact)
 set(MODEL_RUN_CONFIG ${REPO_ROOT}/examples/models/${BUCKYBALL_KERNEL_CHIP}/${BUCKYBALL_KERNEL_MODEL}/configs/running-param.toml)
-set(BUCKYBALL_TILE_TASKS 0)
-if(BUCKYBALL_KERNEL_MODEL AND EXISTS ${MODEL_OUTPUT_DIR}/layout.json)
-  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MODEL_OUTPUT_DIR}/layout.json)
-  file(READ ${MODEL_OUTPUT_DIR}/layout.json TASK_LAYOUT)
-  string(JSON TASK_RUNTIME ERROR_VARIABLE TASK_RUNTIME_ERROR GET "${TASK_LAYOUT}" execution p2e task_runtime)
-  if(TASK_RUNTIME_ERROR)
-    string(JSON TASK_RUNTIME ERROR_VARIABLE TASK_RUNTIME_ERROR GET "${TASK_LAYOUT}" execution task_runtime)
-  endif()
-  if(NOT TASK_RUNTIME_ERROR AND TASK_RUNTIME STREQUAL "tile")
-    set(BUCKYBALL_TILE_TASKS 1)
-  endif()
-endif()
-
 set(INSTALL_WORKLOADS_SCRIPT ${KERNEL_DIR}/scripts/install-workloads.sh)
-set(INSTALL_MODEL_SCRIPT ${KERNEL_DIR}/scripts/install-model.py)
+set(INSTALL_MODEL_SCRIPT ${REPO_ROOT}/stack/serving/loader/install.py)
 set(INSTALL_DATASET_SCRIPT ${KERNEL_DIR}/scripts/install-dataset.sh)
 set(MODEL_DATASETS_DIR ${MODEL_BUILD_DIR}/generated/datasets)
 set(EXTRACT_TOML_TESTS_SCRIPT ${KERNEL_DIR}/scripts/extract_toml_tests.py)
@@ -182,104 +169,17 @@ if(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_MODEL)
 endif()
 
 set(MODEL_INIT "")
-set(WORKER_INSTALL_COMMAND)
-set(WORKER_CPU_ARGS)
-set(WORKER_DEPENDS)
+set(SERVING_INSTALL_COMMAND)
+set(SERVING_ARGS)
+set(SERVING_DEPENDS)
 set(BUDGET_ROOTFS_COMMAND)
 set(BUDGET_IMAGE_COMMAND)
 if(BUCKYBALL_KERNEL_MODEL)
   if(NOT EXISTS ${MODEL_OUTPUT_DIR}/layout.json)
     message(FATAL_ERROR "Model artifact missing: ${MODEL_OUTPUT_DIR}; run bbdev model --build first")
   endif()
-  file(READ ${MODEL_OUTPUT_DIR}/layout.json MODEL_LAYOUT)
-  string(JSON MODEL_P2E ERROR_VARIABLE MODEL_P2E_ERROR GET "${MODEL_LAYOUT}" execution p2e)
-  if(NOT MODEL_P2E_ERROR)
-    string(JSON MODEL_EXECUTION GET "${MODEL_P2E}" kind)
-  else()
-    string(JSON MODEL_EXECUTION GET "${MODEL_LAYOUT}" execution kind)
-  endif()
-  if(MODEL_EXECUTION STREQUAL "host-worker")
-    string(JSON WORKER_TASK_RUNTIME ERROR_VARIABLE WORKER_TASK_ERROR GET "${MODEL_P2E}" task_runtime)
-    if(WORKER_TASK_ERROR OR NOT WORKER_TASK_RUNTIME STREQUAL "tile")
-      message(FATAL_ERROR "host-worker requires execution.p2e.task_runtime=tile")
-    endif()
-    if(NOT BUCKYBALL_TOTAL_HART_COUNT GREATER BUCKYBALL_VISIBLE_HART_COUNT)
-      message(FATAL_ERROR "host-worker requires hidden harts: total-hart-count must exceed visible-hart-count")
-    endif()
-    string(JSON WORKER_COUNT GET "${MODEL_P2E}" workers)
-    string(JSON WORKER_PROTOCOL GET "${MODEL_P2E}" protocol)
-    if(NOT WORKER_COUNT EQUAL 8 OR NOT WORKER_PROTOCOL STREQUAL "bbmux1")
-      message(FATAL_ERROR "host-worker requires workers=8 and protocol=bbmux1")
-    endif()
-    if(BUCKYBALL_VISIBLE_HART_COUNT LESS WORKER_COUNT)
-      message(FATAL_ERROR "host-worker requires at least ${WORKER_COUNT} Linux-visible CPUs")
-    endif()
-    set(WORKER_CPU_SCRIPT ${KERNEL_DIR}/scripts/worker-cpus.py)
-    set(WORKER_CHIP_PB ${REPO_ROOT}/examples/chips/${BUCKYBALL_KERNEL_CHIP}/configs/generated/chip.pb)
-    set(WORKER_PROTO_DIR ${REPO_ROOT}/bbdev/api/steps/config/scripts)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-      ${WORKER_CHIP_PB} ${WORKER_CPU_SCRIPT} ${WORKER_PROTO_DIR}/chip_pb2.py)
-    execute_process(COMMAND python3 ${WORKER_CPU_SCRIPT}
-      --chip-pb ${WORKER_CHIP_PB} --proto-dir ${WORKER_PROTO_DIR}
-      --workers ${WORKER_COUNT} --visible ${BUCKYBALL_VISIBLE_HART_COUNT}
-      OUTPUT_VARIABLE WORKER_CPUS OUTPUT_STRIP_TRAILING_WHITESPACE
-      RESULT_VARIABLE WORKER_CPU_RESULT)
-    if(NOT WORKER_CPU_RESULT EQUAL 0)
-      message(FATAL_ERROR "Cannot resolve worker affinity from chip.pb")
-    endif()
-    message(STATUS "Worker CPUs in Tile order: ${WORKER_CPUS}")
-    set(WORKER_CPU_ARGS --worker-cpus ${WORKER_CPUS})
-    if(BUCKYBALL_MODEL_STORAGE STREQUAL "pmem")
-      execute_process(COMMAND python3 ${PMEM_SCRIPT} check --source ${MODEL_OUTPUT_DIR}
-        --guest-memory-mib ${BUCKYBALL_GUEST_MEMORY_MIB} RESULT_VARIABLE BUDGET_RESULT)
-    else()
-      execute_process(COMMAND python3 ${MEMORY_BUDGET_SCRIPT}
-        --resources ${MODEL_OUTPUT_DIR} --guest-memory-mib ${BUCKYBALL_GUEST_MEMORY_MIB}
-        RESULT_VARIABLE BUDGET_RESULT)
-    endif()
-    if(NOT BUDGET_RESULT EQUAL 0)
-      message(FATAL_ERROR "Model resources exceed the selected storage budget")
-    endif()
-    set(GUEST_SOURCE ${REPO_ROOT}/stack/serving/loader/guest)
-    set(GUEST_BINARY ${CMAKE_BINARY_DIR}/guest/worker-mux)
-    set(GUEST_EXTRA_TARGET)
-    set(GUEST_EXTRA_BINARY)
-    if(BUCKYBALL_MODEL_STORAGE STREQUAL "pmem")
-      set(GUEST_EXTRA_TARGET dax-check)
-      set(GUEST_EXTRA_BINARY ${CMAKE_BINARY_DIR}/guest/dax-check)
-    endif()
-    add_custom_command(OUTPUT ${GUEST_BINARY} ${GUEST_EXTRA_BINARY}
-      COMMAND ${CMAKE_COMMAND} -S ${GUEST_SOURCE} -B ${CMAKE_BINARY_DIR}/guest
-        -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=riscv64
-        -DCMAKE_CXX_COMPILER=${CROSS_COMPILE}g++
-      COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/guest --target worker-mux ${GUEST_EXTRA_TARGET}
-      DEPENDS ${GUEST_SOURCE}/CMakeLists.txt ${GUEST_SOURCE}/mux.cpp ${GUEST_SOURCE}/dax-check.cpp VERBATIM)
-    set(TRANSPORT_CHECK ${CMAKE_BINARY_DIR}/transport-check.stamp)
-    add_custom_command(OUTPUT ${TRANSPORT_CHECK}
-      COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${REPO_ROOT}
-        python3 ${KERNEL_DIR}/tests/transport.py
-      COMMAND ${CMAKE_COMMAND} -E touch ${TRANSPORT_CHECK}
-      DEPENDS ${REPO_ROOT}/stack/serving/transport.py ${KERNEL_DIR}/tests/transport.py
-      VERBATIM)
-    set(WORKER_DEPENDS ${GUEST_BINARY} ${GUEST_EXTRA_BINARY} ${TRANSPORT_CHECK} ${WORKER_CPU_SCRIPT} ${WORKER_CHIP_PB})
-    set(WORKER_INSTALL_COMMAND
-      COMMAND ${CMAKE_COMMAND} -E make_directory ${ROOTFS_DIR}/root/guest
-      COMMAND ${CMAKE_COMMAND} -E copy ${GUEST_BINARY} ${ROOTFS_DIR}/root/guest/worker-mux)
-    if(BUCKYBALL_MODEL_STORAGE STREQUAL "pmem")
-      list(APPEND WORKER_INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E copy
-        ${GUEST_EXTRA_BINARY} ${ROOTFS_DIR}/root/guest/dax-check)
-    endif()
-    set(BUDGET_ROOTFS_COMMAND COMMAND python3 ${MEMORY_BUDGET_SCRIPT}
-      --rootfs ${ROOTFS_DIR} --guest-memory-mib ${BUCKYBALL_GUEST_MEMORY_MIB})
-    set(BUDGET_IMAGE_COMMAND COMMAND python3 ${MEMORY_BUDGET_SCRIPT}
-      --rootfs ${ROOTFS_DIR} --image ${CMAKE_BINARY_DIR}/linux/arch/riscv/boot/Image
-      --guest-memory-mib ${BUCKYBALL_GUEST_MEMORY_MIB})
-  elseif(NOT MODEL_EXECUTION STREQUAL "native")
-    message(FATAL_ERROR "Kernel model images require native or host-worker P2E execution")
-  endif()
-  if(BUCKYBALL_MODEL_STORAGE STREQUAL "pmem" AND NOT MODEL_EXECUTION STREQUAL "host-worker")
-    message(FATAL_ERROR "pmem storage requires host-worker execution")
-  endif()
+  set(MODEL_INIT_TEMPLATE ${KERNEL_DIR}/overlay-model/init.in)
+  add_subdirectory(${REPO_ROOT}/stack/serving/loader/guest ${CMAKE_CURRENT_BINARY_DIR}/serving)
   file(GLOB MODEL_PROGRAMS ${MODEL_OUTPUT_DIR}/*-run)
   list(LENGTH MODEL_PROGRAMS MODEL_PROGRAM_COUNT)
   if(NOT MODEL_PROGRAM_COUNT EQUAL 1)
@@ -313,10 +213,6 @@ if(BUCKYBALL_KERNEL_MODEL)
 
   if(NOT BUCKYBALL_KERNEL_INTERACTIVE)
     set(MODEL_INIT ${CMAKE_BINARY_DIR}/overlay-model/init)
-    set(MODEL_INIT_TEMPLATE ${KERNEL_DIR}/overlay-model/init.in)
-    if(MODEL_EXECUTION STREQUAL "host-worker")
-      set(MODEL_INIT_TEMPLATE ${KERNEL_DIR}/overlay-worker/init.in)
-    endif()
     configure_file(
       ${MODEL_INIT_TEMPLATE}
       ${MODEL_INIT}
@@ -326,6 +222,10 @@ if(BUCKYBALL_KERNEL_MODEL)
 
   file(GLOB_RECURSE MODEL_RUNTIME_FILES CONFIGURE_DEPENDS ${MODEL_OUTPUT_DIR}/*)
   list(APPEND MODEL_RUNTIME_FILES ${MODEL_RUN_CONFIG})
+  if(BUCKYBALL_MODEL_STORAGE STREQUAL "ddr")
+    set(MODEL_DDR_INDEX ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.model.index)
+    list(APPEND SERVING_ARGS --resource-index ${MODEL_DDR_INDEX})
+  endif()
   set(INSTALL_RUNTIME_COMMAND
       python3 ${INSTALL_MODEL_SCRIPT}
       ${MODEL_OUTPUT_DIR}
@@ -333,8 +233,7 @@ if(BUCKYBALL_KERNEL_MODEL)
       ${ROOTFS_DIR}/root
       ${MODEL_RUN_CONFIG}
       "--dataset=${BUCKYBALL_MODEL_DATASET}"
-      "--guest-memory-mib=${BUCKYBALL_GUEST_MEMORY_MIB}"
-      "--model-storage=${BUCKYBALL_MODEL_STORAGE}" ${WORKER_CPU_ARGS})
+      "--model-storage=${BUCKYBALL_MODEL_STORAGE}" ${SERVING_ARGS})
 else()
   set(INSTALL_DATASET_COMMAND bash -c "true")
   set(MODEL_DATASET_DEPENDS "")
@@ -356,6 +255,9 @@ endif()
 set(OVERLAY_COPY_COMMAND
     bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/")
 set(ROOTFS_EXTRA_DEPENDS ${SHARED_OVERLAY_DIR}/init)
+if(BUCKYBALL_MODEL_STORAGE STREQUAL "ddr")
+  list(APPEND ROOTFS_EXTRA_DEPENDS ${MODEL_DDR_INDEX})
+endif()
 if(BUCKYBALL_KERNEL_CHIP AND NOT BUCKYBALL_KERNEL_MODEL AND NOT BUCKYBALL_KERNEL_INTERACTIVE)
   set(OVERLAY_COPY_COMMAND
       bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/ && cp ${CHIP_INIT} ${ROOTFS_DIR}/init && cp ${USER_BINDINGS} ${ROOTFS_DIR}/root/workload-harts.tsv")
@@ -411,12 +313,12 @@ add_custom_command(
     COMMAND ${OVERLAY_COPY_COMMAND}
     COMMAND chmod +x ${ROOTFS_DIR}/init
     # Copy workload binaries or a single model runtime.
-    ${WORKER_INSTALL_COMMAND}
+    ${SERVING_INSTALL_COMMAND}
     COMMAND ${INSTALL_RUNTIME_COMMAND}
     COMMAND ${INSTALL_DATASET_COMMAND}
     ${BUDGET_ROOTFS_COMMAND}
     COMMAND ${CMAKE_COMMAND} -E touch ${ROOTFS_STAMP}
-    DEPENDS ${BUSYBOX_BIN} ${WORKER_DEPENDS} ${MEMORY_BUDGET_SCRIPT} ${PMEM_SCRIPT}
+    DEPENDS ${BUSYBOX_BIN} ${SERVING_DEPENDS} ${MEMORY_BUDGET_SCRIPT} ${MODEL_DDR_SCRIPT}
             ${INITRAMFS_DEVNODES}
             ${INSTALL_WORKLOADS_SCRIPT}
             ${INSTALL_MODEL_SCRIPT}
@@ -432,18 +334,24 @@ add_custom_target(rootfs-build DEPENDS ${ROOTFS_STAMP})
 set(LINUX_BUILD_DIR ${CMAKE_BINARY_DIR}/linux)
 set(LINUX_IMAGE_PATH ${LINUX_BUILD_DIR}/arch/riscv/boot/Image)
 file(READ ${CONFIG_DIR}/linux-config KERNEL_CONFIG)
-if(BUCKYBALL_VISIBLE_HART_COUNT GREATER 1)
-  string(REGEX REPLACE "CONFIG_NR_CPUS=[0-9]+" "CONFIG_NR_CPUS=${BUCKYBALL_VISIBLE_HART_COUNT}" KERNEL_CONFIG "${KERNEL_CONFIG}")
+if(BUCKYBALL_HART_COUNT GREATER 1)
+  string(REGEX REPLACE "CONFIG_NR_CPUS=[0-9]+" "CONFIG_NR_CPUS=${BUCKYBALL_HART_COUNT}" KERNEL_CONFIG "${KERNEL_CONFIG}")
   string(APPEND KERNEL_CONFIG "\nCONFIG_SMP=y\n")
 else()
   string(APPEND KERNEL_CONFIG "\n# CONFIG_SMP is not set\n")
 endif()
 string(REPLACE "mem=512M" "mem=${BUCKYBALL_GUEST_MEMORY_MIB}M" KERNEL_CONFIG "${KERNEL_CONFIG}")
-if(MODEL_EXECUTION STREQUAL "host-worker")
+if(SERVING_QUIET_CONSOLE)
   string(REPLACE "loglevel=8 ignore_loglevel" "loglevel=0" KERNEL_CONFIG "${KERNEL_CONFIG}")
 endif()
-if(BUCKYBALL_MODEL_STORAGE STREQUAL "pmem")
-  string(APPEND KERNEL_CONFIG "\nCONFIG_LIBNVDIMM=y\nCONFIG_OF_PMEM=y\nCONFIG_BLK_DEV_PMEM=y\nCONFIG_FS_DAX=y\nCONFIG_FS_DAX_LIMITED=y\nCONFIG_EXT2_FS=y\n")
+if(BUCKYBALL_KERNEL_MODEL AND BUCKYBALL_MODEL_STORAGE STREQUAL "initramfs")
+  string(REPLACE "CONFIG_INITRAMFS_COMPRESSION_NONE=y"
+    "# CONFIG_INITRAMFS_COMPRESSION_NONE is not set" KERNEL_CONFIG "${KERNEL_CONFIG}")
+  string(REPLACE "# CONFIG_INITRAMFS_COMPRESSION_ZSTD is not set"
+    "CONFIG_INITRAMFS_COMPRESSION_ZSTD=y" KERNEL_CONFIG "${KERNEL_CONFIG}")
+endif()
+if(BUCKYBALL_MODEL_STORAGE STREQUAL "ddr")
+  string(APPEND KERNEL_CONFIG "\nCONFIG_DEVMEM=y\n# CONFIG_STRICT_DEVMEM is not set\n")
 endif()
 file(WRITE ${CMAKE_BINARY_DIR}/linux-config "${KERNEL_CONFIG}")
 
@@ -474,9 +382,6 @@ add_custom_command(
             Image
     ${BUDGET_IMAGE_COMMAND}
     DEPENDS ${CMAKE_BINARY_DIR}/linux-config ${ROOTFS_STAMP} ${INITRAMFS_DEVNODES}
-            ${LINUX_DIR}/drivers/nvdimm/Kconfig
-            ${LINUX_DIR}/drivers/nvdimm/pmem.c
-            ${LINUX_DIR}/fs/ext2/file.c
     COMMENT "Building Linux kernel with initramfs"
     VERBATIM
 )
@@ -487,7 +392,8 @@ add_custom_target(linux-build DEPENDS ${LINUX_IMAGE_PATH})
 # The BootROM passes no DTB: OpenSBI takes this one, generated from the chip PB, from its payload.
 # The workload build also configures this project without a chip; only fw_payload needs one.
 unset(BUCKYBALL_TIMEBASE_HZ CACHE)
-set(BUCKYBALL_TIMEBASE_HZ 5000) # 5 MHz SoC clock / 1000 RTC divider.
+# Match Chipyard's 500 MHz logical clock / 1000 RTC divider, not FPGA wall time.
+set(BUCKYBALL_TIMEBASE_HZ 500000)
 if(BUCKYBALL_KERNEL_CHIP)
   find_program(PYTHON3 python3 REQUIRED)
   find_program(DTC dtc REQUIRED)
@@ -523,12 +429,11 @@ set(OPENSBI_BUILD_DIR ${CMAKE_BINARY_DIR}/opensbi)
 set(OPENSBI_FW_PATH ${OPENSBI_BUILD_DIR}/platform/buckyball/firmware/fw_payload.bin)
 set(OPENSBI_PLATFORM_CONFIG ${CMAKE_BINARY_DIR}/opensbi-platform.config)
 file(GENERATE OUTPUT ${OPENSBI_PLATFORM_CONFIG} CONTENT
-  "tile_tasks=${BUCKYBALL_TILE_TASKS}\nvisible=${BUCKYBALL_VISIBLE_HART_COUNT}\ntotal=${BUCKYBALL_TOTAL_HART_COUNT}\nhidden_base=${BUCKYBALL_HIDDEN_HART_BASE}\nguest_bytes=${BUCKYBALL_GUEST_MEMORY_BYTES}\nfdt_addr=${BUCKYBALL_FDT_ADDR}\nfdt_size=${BUCKYBALL_FDT_SIZE}\npmem_base=${BUCKYBALL_PMEM_BASE}\npmem_size=${BUCKYBALL_PMEM_SIZE}\n")
+  "harts=${BUCKYBALL_HART_COUNT}\nguest_bytes=${BUCKYBALL_GUEST_MEMORY_BYTES}\nfdt_addr=${BUCKYBALL_FDT_ADDR}\nfdt_size=${BUCKYBALL_FDT_SIZE}\nmodel_base=${BUCKYBALL_MODEL_DDR_BASE}\nmodel_size=${BUCKYBALL_MODEL_DDR_SIZE}\n")
 set(OPENSBI_PLATFORM_SOURCES
     ${PLATFORM_DIR}/buckyball/Kconfig
     ${PLATFORM_DIR}/buckyball/objects.mk
-    ${PLATFORM_DIR}/buckyball/platform.c
-    ${PLATFORM_DIR}/buckyball/task-worker.S)
+    ${PLATFORM_DIR}/buckyball/platform.c)
 
 add_custom_command(
     OUTPUT  ${OPENSBI_FW_PATH}
@@ -539,15 +444,12 @@ add_custom_command(
             O=${OPENSBI_BUILD_DIR}
             FW_PAYLOAD_PATH=${LINUX_IMAGE_PATH}
             FW_FDT_PATH=${CHIP_DTB}
-            BUCKYBALL_VISIBLE_HART_COUNT=${BUCKYBALL_VISIBLE_HART_COUNT}
-            BUCKYBALL_TOTAL_HART_COUNT=${BUCKYBALL_TOTAL_HART_COUNT}
-            BUCKYBALL_HIDDEN_HART_BASE=${BUCKYBALL_HIDDEN_HART_BASE}
-            BUCKYBALL_TILE_TASKS=${BUCKYBALL_TILE_TASKS}
+            BUCKYBALL_HART_COUNT=${BUCKYBALL_HART_COUNT}
             BUCKYBALL_GUEST_MEMORY_BYTES=${BUCKYBALL_GUEST_MEMORY_BYTES}
             BUCKYBALL_FDT_ADDR=${BUCKYBALL_FDT_ADDR}
             BUCKYBALL_FDT_SIZE=${BUCKYBALL_FDT_SIZE}
-            BUCKYBALL_PMEM_BASE=${BUCKYBALL_PMEM_BASE}
-            BUCKYBALL_PMEM_SIZE=${BUCKYBALL_PMEM_SIZE}
+            BUCKYBALL_MODEL_DDR_BASE=${BUCKYBALL_MODEL_DDR_BASE}
+            BUCKYBALL_MODEL_DDR_SIZE=${BUCKYBALL_MODEL_DDR_SIZE}
     DEPENDS ${LINUX_IMAGE_PATH} ${CHIP_DTB} ${OPENSBI_PLATFORM_SOURCES} ${OPENSBI_PLATFORM_CONFIG}
     COMMENT "Building OpenSBI fw_payload with Linux"
     VERBATIM
@@ -569,29 +471,29 @@ add_custom_command(
 )
 
 set(STORAGE_OUTPUT)
-if(BUCKYBALL_MODEL_STORAGE STREQUAL "pmem")
-  set(PMEM_IMAGE ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.model.ext2)
-  set(PMEM_RESOURCE_FILES ${MODEL_OUTPUT_DIR}/layout.json)
-  string(JSON PMEM_RESOURCE_COUNT LENGTH "${MODEL_LAYOUT}" resources)
-  math(EXPR PMEM_LAST_RESOURCE "${PMEM_RESOURCE_COUNT} - 1")
-  foreach(INDEX RANGE ${PMEM_LAST_RESOURCE})
+if(BUCKYBALL_MODEL_STORAGE STREQUAL "ddr")
+  set(MODEL_DDR_IMAGE ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.model.bin)
+  set(MODEL_DDR_RESOURCE_FILES ${MODEL_OUTPUT_DIR}/layout.json)
+  file(READ ${MODEL_OUTPUT_DIR}/layout.json MODEL_LAYOUT)
+  string(JSON MODEL_DDR_RESOURCE_COUNT LENGTH "${MODEL_LAYOUT}" resources)
+  math(EXPR MODEL_DDR_LAST_RESOURCE "${MODEL_DDR_RESOURCE_COUNT} - 1")
+  foreach(INDEX RANGE ${MODEL_DDR_LAST_RESOURCE})
     string(JSON RESOURCE_KEY MEMBER "${MODEL_LAYOUT}" resources ${INDEX})
     string(JSON RESOURCE_FILE GET "${MODEL_LAYOUT}" resources ${RESOURCE_KEY})
-    list(APPEND PMEM_RESOURCE_FILES ${MODEL_OUTPUT_DIR}/${RESOURCE_FILE})
+    list(APPEND MODEL_DDR_RESOURCE_FILES ${MODEL_OUTPUT_DIR}/${RESOURCE_FILE})
   endforeach()
-  list(REMOVE_DUPLICATES PMEM_RESOURCE_FILES)
+  list(REMOVE_DUPLICATES MODEL_DDR_RESOURCE_FILES)
   set(STORAGE_OUTPUT ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.load.json)
-  add_custom_command(OUTPUT ${PMEM_IMAGE}
-    BYPRODUCTS ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.model.files.json
-    COMMAND python3 ${PMEM_SCRIPT} image --source ${MODEL_OUTPUT_DIR}
-      --guest-memory-mib ${BUCKYBALL_GUEST_MEMORY_MIB} --image ${PMEM_IMAGE}
-      --staging ${CMAKE_BINARY_DIR}/pmem-root
-    DEPENDS ${PMEM_SCRIPT} ${PMEM_RESOURCE_FILES} VERBATIM)
+  add_custom_command(OUTPUT ${MODEL_DDR_IMAGE}
+    ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.model.files.json ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.model.index
+    COMMAND python3 ${MODEL_DDR_SCRIPT} image --source ${MODEL_OUTPUT_DIR}
+      --guest-memory-mib ${BUCKYBALL_GUEST_MEMORY_MIB} --image ${MODEL_DDR_IMAGE}
+    DEPENDS ${MODEL_DDR_SCRIPT} ${MODEL_DDR_RESOURCE_FILES} VERBATIM)
   add_custom_command(OUTPUT ${STORAGE_OUTPUT}
-    COMMAND python3 ${PMEM_SCRIPT} manifest --source ${MODEL_OUTPUT_DIR}
-      --guest-memory-mib ${BUCKYBALL_GUEST_MEMORY_MIB} --image ${PMEM_IMAGE}
+    COMMAND python3 ${MODEL_DDR_SCRIPT} manifest --source ${MODEL_OUTPUT_DIR}
+      --guest-memory-mib ${BUCKYBALL_GUEST_MEMORY_MIB} --image ${MODEL_DDR_IMAGE}
       --boot ${OPENSBI_FW} --out ${STORAGE_OUTPUT}
-    DEPENDS ${OPENSBI_FW} ${PMEM_IMAGE} ${PMEM_SCRIPT} VERBATIM)
+    DEPENDS ${OPENSBI_FW} ${MODEL_DDR_IMAGE} ${MODEL_DDR_SCRIPT} VERBATIM)
 endif()
 
 # ── top-level target ──────────────────────────────────────────────────────────

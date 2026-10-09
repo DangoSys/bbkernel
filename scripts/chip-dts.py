@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the Linux device tree for a chip from its Chip.pb.
 
-Every hart in the PB is listed; OpenSBI marks the hidden ones disabled at boot. Device addresses
+Only Linux control harts are listed. Device addresses
 follow the System's DeviceParams and SCU defaults (CLINT, PLIC, SCU). The timebase is the
 RTC tick frequency after the CLINT clock divider.
 """
@@ -46,9 +46,14 @@ def cells(value: int) -> str:
 
 
 def generate(chip, guest_bytes: int, timebase_hz: int) -> str:
-    harts = sorted(chip.cores, key=lambda core: core.hart_id)
+    indices = list(chip.tiles[0].core_indices)
+    for tile in chip.tiles[1:]:
+        if not tile.HasField("controller_core_index") or tile.controller_core_index not in tile.core_indices:
+            raise SystemExit("compute tile needs an explicit controller core")
+        indices.append(tile.controller_core_index)
+    harts = sorted((chip.cores[index] for index in indices), key=lambda core: core.hart_id)
     if [core.hart_id for core in harts] != list(range(len(harts))):
-        raise SystemExit("chip hart ids are not 0 until the hart count")
+        raise SystemExit("Linux control hart ids must be contiguous from zero")
     cpus = []
     for core in harts:
         h = core.hart_id

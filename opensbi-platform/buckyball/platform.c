@@ -45,14 +45,8 @@ extern char _fw_start[], _fw_end[];
 // rdcylce to do performance counting)
 #define BUCKYBALL_SCOUNTEREN_CY_TM 0x03UL
 
-#if BUCKYBALL_VISIBLE_HART_COUNT < 1
-#error "BUCKYBALL_VISIBLE_HART_COUNT must be at least 1"
-#endif
-#if BUCKYBALL_TOTAL_HART_COUNT < BUCKYBALL_VISIBLE_HART_COUNT
-#error "BUCKYBALL_TOTAL_HART_COUNT must cover visible harts"
-#endif
-#if BUCKYBALL_HIDDEN_HART_BASE < BUCKYBALL_VISIBLE_HART_COUNT
-#error "BUCKYBALL_HIDDEN_HART_BASE must be after visible harts"
+#if BUCKYBALL_HART_COUNT < 1
+#error "BUCKYBALL_HART_COUNT must be at least 1"
 #endif
 
 unsigned long fw_platform_init(unsigned long arg0, unsigned long arg1,
@@ -101,56 +95,45 @@ static void buckyball_console_putc(char ch) {
   *uart = (unsigned char)ch;
 }
 
-static bool buckyball_is_visible_hart(unsigned long hartid) {
-  return hartid < BUCKYBALL_VISIBLE_HART_COUNT;
+/* hvc0 carries binary worker frames as well as text. */
+static unsigned long buckyball_console_puts(const char *data,
+                                          unsigned long length) {
+  for (unsigned long i = 0; i < length; ++i)
+    buckyball_console_putc(data[i]);
+  return length;
 }
 
-static int buckyball_disable_hidden_harts_in_fdt(void) {
-  int cpu, cpus, err;
-  u32 hartid;
-  void *fdt = fdt_get_address_rw();
-
-  if (!fdt)
-    return -FDT_ERR_BADSTATE;
-
-  cpus = fdt_path_offset(fdt, "/cpus");
-  if (cpus < 0)
-    return cpus;
-
-  fdt_for_each_subnode(cpu, fdt, cpus) {
-    err = fdt_parse_hart_id(fdt, cpu, &hartid);
-    if (err)
-      return err;
-    if (!buckyball_is_visible_hart(hartid)) {
-      err = fdt_setprop_string(fdt, cpu, "status", "disabled");
-      if (err)
-        return err;
-    }
-  }
-  return cpu == -FDT_ERR_NOTFOUND ? 0 : cpu;
-}
-
-static int buckyball_add_pmem_in_fdt(void *fdt) {
+static int buckyball_add_ddr_in_fdt(void *fdt) {
   fdt64_t reg[2];
   char name[40];
   int node, err;
 
-  if (!BUCKYBALL_PMEM_SIZE)
-    return BUCKYBALL_PMEM_BASE ? -FDT_ERR_BADVALUE : 0;
-  if (BUCKYBALL_PMEM_BASE != 0x80000000UL + BUCKYBALL_GUEST_MEMORY_BYTES ||
-      BUCKYBALL_PMEM_SIZE != (16UL << 30) - BUCKYBALL_GUEST_MEMORY_BYTES ||
+  if (!BUCKYBALL_MODEL_DDR_SIZE)
+    return BUCKYBALL_MODEL_DDR_BASE ? -FDT_ERR_BADVALUE : 0;
+  if (BUCKYBALL_MODEL_DDR_BASE != 0x80000000UL + BUCKYBALL_GUEST_MEMORY_BYTES ||
+      BUCKYBALL_MODEL_DDR_SIZE != (16UL << 30) - BUCKYBALL_GUEST_MEMORY_BYTES ||
       fdt_address_cells(fdt, 0) != 2 || fdt_size_cells(fdt, 0) != 2)
     return -FDT_ERR_BADVALUE;
-  sbi_snprintf(name, sizeof(name), "pmem@%lx", (unsigned long)BUCKYBALL_PMEM_BASE);
-  node = fdt_add_subnode(fdt, 0, name);
-  if (node < 0)
-    return node;
-  err = fdt_setprop_string(fdt, node, "compatible", "pmem-region");
-  if (err)
-    return err;
-  reg[0] = cpu_to_fdt64(BUCKYBALL_PMEM_BASE);
-  reg[1] = cpu_to_fdt64(BUCKYBALL_PMEM_SIZE);
-  return fdt_setprop(fdt, node, "reg", reg, sizeof(reg));
+  int reserved = fdt_path_offset(fdt, "/reserved-memory");
+  if (reserved == -FDT_ERR_NOTFOUND) {
+    reserved = fdt_add_subnode(fdt, 0, "reserved-memory");
+    if (reserved < 0) return reserved;
+    err = fdt_setprop_u32(fdt, reserved, "#address-cells", 2);
+    if (err) return err;
+    err = fdt_setprop_u32(fdt, reserved, "#size-cells", 2);
+    if (err) return err;
+    err = fdt_setprop(fdt, reserved, "ranges", NULL, 0);
+    if (err) return err;
+  }
+  if (reserved < 0) return reserved;
+  sbi_snprintf(name, sizeof(name), "model@%lx", (unsigned long)BUCKYBALL_MODEL_DDR_BASE);
+  node = fdt_add_subnode(fdt, reserved, name);
+  if (node < 0) return node;
+  reg[0] = cpu_to_fdt64(BUCKYBALL_MODEL_DDR_BASE);
+  reg[1] = cpu_to_fdt64(BUCKYBALL_MODEL_DDR_SIZE);
+  err = fdt_setprop(fdt, node, "reg", reg, sizeof(reg));
+  if (err) return err;
+  return fdt_setprop(fdt, node, "no-map", NULL, 0);
 }
 
 static bool buckyball_cold_boot_allowed(u32 hartid) {
@@ -173,6 +156,7 @@ static int buckyball_console_getc(void) {
 static struct sbi_console_device buckyball_console = {
     .name = "buckyball-scu",
     .console_putc = buckyball_console_putc,
+    .console_puts = buckyball_console_puts,
     .console_getc = buckyball_console_getc,
 };
 
@@ -221,7 +205,7 @@ static struct aclint_mswi_data mswi = {
     .addr = BUCKYBALL_CLINT_ADDR + CLINT_MSWI_OFFSET,
     .size = ACLINT_MSWI_SIZE,
     .first_hartid = 0,
-    .hart_count = BUCKYBALL_VISIBLE_HART_COUNT,
+    .hart_count = BUCKYBALL_HART_COUNT,
 };
 
 static struct aclint_mtimer_data mtimer = {
@@ -232,19 +216,9 @@ static struct aclint_mtimer_data mtimer = {
                      ACLINT_DEFAULT_MTIMECMP_OFFSET,
     .mtimecmp_size = ACLINT_DEFAULT_MTIMECMP_SIZE,
     .first_hartid = 0,
-    .hart_count = BUCKYBALL_VISIBLE_HART_COUNT,
+    .hart_count = BUCKYBALL_HART_COUNT,
     .has_64bit_mmio = true,
 };
-
-static int buckyball_nascent_init(void) {
-#if BUCKYBALL_TILE_TASKS
-  if (!buckyball_is_visible_hart(current_hartid())) {
-    extern void buckyball_task_worker(void) __attribute__((noreturn));
-    buckyball_task_worker();
-  }
-#endif
-  return 0;
-}
 
 static int buckyball_early_init(bool cold_boot) {
   if (sbi_hart_priv_version(sbi_scratch_thishart_ptr()) >=
@@ -266,9 +240,7 @@ static int buckyball_final_init(bool cold_boot) {
     if (fdt != (void *)BUCKYBALL_FDT_ADDR ||
         fdt_totalsize(fdt) != BUCKYBALL_FDT_SIZE)
       return SBI_EINVAL;
-    err = buckyball_disable_hidden_harts_in_fdt();
-    if (!err)
-      err = buckyball_add_pmem_in_fdt(fdt);
+    err = buckyball_add_ddr_in_fdt(fdt);
     if (err) {
       sbi_printf("Buckyball: DTB fixup failed: %s\n", fdt_strerror(err));
       return SBI_EINVAL;
@@ -288,7 +260,7 @@ static int buckyball_final_init(bool cold_boot) {
 static int buckyball_irqchip_init(void) {
   int i;
 
-  plic = sbi_zalloc(PLIC_DATA_SIZE(BUCKYBALL_VISIBLE_HART_COUNT));
+  plic = sbi_zalloc(PLIC_DATA_SIZE(BUCKYBALL_HART_COUNT));
   if (!plic)
     return SBI_ENOMEM;
 
@@ -297,7 +269,7 @@ static int buckyball_irqchip_init(void) {
   plic->size = BUCKYBALL_PLIC_SIZE;
   plic->num_src = BUCKYBALL_PLIC_NUM_SOURCES;
 
-  for (i = 0; i < BUCKYBALL_VISIBLE_HART_COUNT; i++) {
+  for (i = 0; i < BUCKYBALL_HART_COUNT; i++) {
     plic->context_map[i][PLIC_M_CONTEXT] = i * 2;
     plic->context_map[i][PLIC_S_CONTEXT] = i * 2 + 1;
   }
@@ -317,7 +289,6 @@ static int buckyball_timer_init(void) {
 }
 
 const struct sbi_platform_operations platform_ops = {
-    .nascent_init = buckyball_nascent_init,
     .cold_boot_allowed = buckyball_cold_boot_allowed,
     .early_init = buckyball_early_init,
     .final_init = buckyball_final_init,
@@ -330,8 +301,8 @@ const struct sbi_platform platform = {
     .platform_version = SBI_PLATFORM_VERSION(0x0, 0x01),
     .name = "Buckyball",
     .features = SBI_PLATFORM_DEFAULT_FEATURES,
-    .hart_count = BUCKYBALL_TILE_TASKS ? BUCKYBALL_TOTAL_HART_COUNT : BUCKYBALL_VISIBLE_HART_COUNT,
+    .hart_count = BUCKYBALL_HART_COUNT,
     .hart_stack_size = SBI_PLATFORM_DEFAULT_HART_STACK_SIZE,
-    .heap_size = SBI_PLATFORM_DEFAULT_HEAP_SIZE(BUCKYBALL_VISIBLE_HART_COUNT),
+    .heap_size = SBI_PLATFORM_DEFAULT_HEAP_SIZE(BUCKYBALL_HART_COUNT),
     .platform_ops_addr = (unsigned long)&platform_ops,
 };

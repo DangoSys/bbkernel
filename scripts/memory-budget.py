@@ -1,8 +1,9 @@
 import argparse
+import struct
 from pathlib import Path
 
 FDT_BYTES = 256 * 1024
-HEADROOM = 512 * 1024 * 1024  # Kernel, page tables and worker runtime reserve; not a measured peak.
+HEADROOM = 512 * 1024 * 1024  # Kernel, page tables and userspace runtime reserve; not a measured peak.
 
 
 def check(required, available, detail):
@@ -35,6 +36,15 @@ def main():
     if args.rootfs:
         total = sum(p.stat().st_size for p in args.rootfs.rglob("*") if p.is_file() and not p.is_symlink())
         image = args.image.stat().st_size if args.image else total
+        if args.image:
+            with args.image.open("rb") as source:
+                header = source.read(64)
+            if len(header) != 64 or header[48:56] != b"RISCV\0\0\0":
+                raise ValueError("Expected a RISC-V Linux Image header")
+            span = struct.unpack_from("<Q", header, 16)[0]
+            if span >= 1024 * 1024 * 1024:
+                raise ValueError(f"RISC-V early kernel mapping exceeds one 1 GiB PUD: span={span}; "
+                                 "compress the embedded initramfs or use external model storage")
         check(total + image + HEADROOM, available, f"rootfs={total}, image_or_second_copy={image}, headroom={HEADROOM}")
     if args.payload:
         size = args.payload.stat().st_size

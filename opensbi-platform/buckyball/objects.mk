@@ -2,19 +2,16 @@
 
 platform-cppflags-y =
 platform-cflags-y =
-platform-cflags-y += -DBUCKYBALL_VISIBLE_HART_COUNT=$(BUCKYBALL_VISIBLE_HART_COUNT)
-platform-cflags-y += -DBUCKYBALL_TOTAL_HART_COUNT=$(BUCKYBALL_TOTAL_HART_COUNT)
-platform-cflags-y += -DBUCKYBALL_HIDDEN_HART_BASE=$(BUCKYBALL_HIDDEN_HART_BASE)
-platform-cflags-y += -DBUCKYBALL_TILE_TASKS=$(BUCKYBALL_TILE_TASKS)
+platform-cflags-y += -DBUCKYBALL_HART_COUNT=$(BUCKYBALL_HART_COUNT)
 platform-cflags-y += -DBUCKYBALL_GUEST_MEMORY_BYTES=$(BUCKYBALL_GUEST_MEMORY_BYTES)
 platform-cflags-y += -DBUCKYBALL_FDT_ADDR=$(BUCKYBALL_FDT_ADDR)
 platform-cflags-y += -DBUCKYBALL_FDT_SIZE=$(BUCKYBALL_FDT_SIZE)
-platform-cflags-y += -DBUCKYBALL_PMEM_BASE=$(BUCKYBALL_PMEM_BASE)
-platform-cflags-y += -DBUCKYBALL_PMEM_SIZE=$(BUCKYBALL_PMEM_SIZE)
+platform-cflags-y += -DBUCKYBALL_MODEL_DDR_BASE=$(BUCKYBALL_MODEL_DDR_BASE)
+platform-cflags-y += -DBUCKYBALL_MODEL_DDR_SIZE=$(BUCKYBALL_MODEL_DDR_SIZE)
 platform-asflags-y =
 platform-ldflags-y =
 
-platform-objs-y += platform.o task-worker.o
+platform-objs-y += platform.o
 
 PLATFORM_RISCV_XLEN = 64
 PLATFORM_RISCV_ABI = lp64d
