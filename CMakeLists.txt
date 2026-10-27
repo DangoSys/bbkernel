@@ -43,17 +43,8 @@ set(BUCKYBALL_MODEL_BASE "" CACHE STRING "Physical address of the model region o
 option(BUCKYBALL_KERNEL_INTERACTIVE
   "Keep shared /init shell; do not auto-run design workloads" OFF)
 
-set(FW_PAYLOAD_NAME fw_payload)
-if(NOT BUCKYBALL_HART_COUNT STREQUAL "64")
-  set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-h${BUCKYBALL_HART_COUNT})
-endif()
-if(BUCKYBALL_KERNEL_DESIGN)
-  set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-${BUCKYBALL_KERNEL_DESIGN}-linux)
-endif()
-
-if(NOT BUCKYBALL_GUEST_MEMORY_MIB STREQUAL "512")
-  set(FW_PAYLOAD_NAME ${FW_PAYLOAD_NAME}-mem${BUCKYBALL_GUEST_MEMORY_MIB}M)
-endif()
+# OUTPUT_DIR belongs to one device config, so the image name is fixed.
+set(FW_PAYLOAD_NAME fw_payload-linux)
 set(OPENSBI_FW    ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.bin)
 set(BUSYBOX_BIN   ${CMAKE_BINARY_DIR}/busybox/busybox)
 set(ROOTFS_DIR    ${CMAKE_BINARY_DIR}/rootfs)
@@ -219,8 +210,9 @@ foreach(APPLET IN LISTS BUSYBOX_APPLETS)
        COMMAND ${CMAKE_COMMAND} -E create_symlink busybox ${ROOTFS_DIR}/bin/${APPLET})
 endforeach()
 
-add_custom_command(
-    OUTPUT  ${ROOTFS_STAMP}
+# The workload binaries the rootfs carries are found by name when it is built,
+# so CMake cannot track them: the rootfs is rebuilt on every kernel build.
+add_custom_target(rootfs-build
     COMMAND ${CMAKE_COMMAND} -E rm -rf ${ROOTFS_DIR}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${ROOTFS_DIR}/bin
                                                ${ROOTFS_DIR}/sbin
@@ -243,6 +235,7 @@ add_custom_command(
     # Copy workload binaries.
     COMMAND ${INSTALL_RUNTIME_COMMAND}
     COMMAND ${CMAKE_COMMAND} -E touch ${ROOTFS_STAMP}
+    BYPRODUCTS ${ROOTFS_STAMP}
     DEPENDS ${BUSYBOX_BIN} ${MODEL_RUN} ${BUDDY_CLI}
             ${INITRAMFS_DEVNODES}
             ${INSTALL_WORKLOADS_SCRIPT}
@@ -251,7 +244,6 @@ add_custom_command(
     VERBATIM
 )
 
-add_custom_target(rootfs-build DEPENDS ${ROOTFS_STAMP})
 
 # ── linux kernel with initramfs ───────────────────────────────────────────────
 set(LINUX_BUILD_DIR ${CMAKE_BINARY_DIR}/linux)
