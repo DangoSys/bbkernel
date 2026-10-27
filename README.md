@@ -6,7 +6,7 @@ Complete OpenSBI + Linux + initramfs build for Buckyball RISC-V DSA.
 
 ```
 Memory Layout:
-  0x10000     : BootROM (+ DTB appended by Rocket Chip)
+  0x10000     : BootROM (+ DTB appended by Rocket Design)
   0x02000000  : CLINT (MSWI + MTIMER)
   0x0C000000  : PLIC
   0x60000000  : SCU (per-hart UART at base + hartid*0x40000 + 0x20000)

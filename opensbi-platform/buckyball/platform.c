@@ -95,45 +95,11 @@ static void buckyball_console_putc(char ch) {
   *uart = (unsigned char)ch;
 }
 
-/* hvc0 carries binary worker frames as well as text. */
 static unsigned long buckyball_console_puts(const char *data,
                                           unsigned long length) {
   for (unsigned long i = 0; i < length; ++i)
     buckyball_console_putc(data[i]);
   return length;
-}
-
-static int buckyball_add_ddr_in_fdt(void *fdt) {
-  fdt64_t reg[2];
-  char name[40];
-  int node, err;
-
-  if (!BUCKYBALL_MODEL_DDR_SIZE)
-    return BUCKYBALL_MODEL_DDR_BASE ? -FDT_ERR_BADVALUE : 0;
-  if (BUCKYBALL_MODEL_DDR_BASE != 0x80000000UL + BUCKYBALL_GUEST_MEMORY_BYTES ||
-      BUCKYBALL_MODEL_DDR_SIZE != (16UL << 30) - BUCKYBALL_GUEST_MEMORY_BYTES ||
-      fdt_address_cells(fdt, 0) != 2 || fdt_size_cells(fdt, 0) != 2)
-    return -FDT_ERR_BADVALUE;
-  int reserved = fdt_path_offset(fdt, "/reserved-memory");
-  if (reserved == -FDT_ERR_NOTFOUND) {
-    reserved = fdt_add_subnode(fdt, 0, "reserved-memory");
-    if (reserved < 0) return reserved;
-    err = fdt_setprop_u32(fdt, reserved, "#address-cells", 2);
-    if (err) return err;
-    err = fdt_setprop_u32(fdt, reserved, "#size-cells", 2);
-    if (err) return err;
-    err = fdt_setprop(fdt, reserved, "ranges", NULL, 0);
-    if (err) return err;
-  }
-  if (reserved < 0) return reserved;
-  sbi_snprintf(name, sizeof(name), "model@%lx", (unsigned long)BUCKYBALL_MODEL_DDR_BASE);
-  node = fdt_add_subnode(fdt, reserved, name);
-  if (node < 0) return node;
-  reg[0] = cpu_to_fdt64(BUCKYBALL_MODEL_DDR_BASE);
-  reg[1] = cpu_to_fdt64(BUCKYBALL_MODEL_DDR_SIZE);
-  err = fdt_setprop(fdt, node, "reg", reg, sizeof(reg));
-  if (err) return err;
-  return fdt_setprop(fdt, node, "no-map", NULL, 0);
 }
 
 static bool buckyball_cold_boot_allowed(u32 hartid) {
@@ -240,11 +206,6 @@ static int buckyball_final_init(bool cold_boot) {
     if (fdt != (void *)BUCKYBALL_FDT_ADDR ||
         fdt_totalsize(fdt) != BUCKYBALL_FDT_SIZE)
       return SBI_EINVAL;
-    err = buckyball_add_ddr_in_fdt(fdt);
-    if (err) {
-      sbi_printf("Buckyball: DTB fixup failed: %s\n", fdt_strerror(err));
-      return SBI_EINVAL;
-    }
     fdt_fixups(fdt);
     // The staging area is 256 KiB; hand Linux the packed tree so it does not checksum the slack.
     err = fdt_pack(fdt);

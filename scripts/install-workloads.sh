@@ -5,7 +5,7 @@
 #   install-workloads.sh <workloads_output_dir> <rootfs_root_dir> <allowlist_file>
 #
 # With allowlist: every stem must resolve to exactly one file, else fail.
-# Without allowlist: install every *-linux under workloads_output_dir; zero is an error.
+# Without allowlist: install every *-linux under workloads_output_dir.
 set -euo pipefail
 
 WORKLOADS_DIR="$1"
@@ -55,11 +55,6 @@ else
         echo "[kernel] installed $(basename "$f")"
         count=$((count + 1))
     done < <(find "$WORKLOADS_DIR" -name '*-linux' -type f -print0 | sort -z)
-fi
-
-if [ "$count" -eq 0 ]; then
-    echo "[kernel] ERROR: no workload binaries installed into /root/" >&2
-    exit 1
 fi
 
 echo "[kernel] $count workload binary/binaries installed into /root/"

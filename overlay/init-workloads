@@ -17,6 +17,23 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 
+# A model in the model region of the DDR is run instead of the regression;
+# a DDR without a model region has no base. Failures use reboot -f, which
+# ends the simulation with an error.
+if [ -n "@BUCKYBALL_MODEL_BASE@" ]; then
+  set +e
+  /bin/model-run @BUCKYBALL_MODEL_BASE@
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    echo "PASS model"
+    poweroff -f
+  elif [ "$rc" -ne 2 ]; then
+    echo "FAIL model rc=$rc"
+    reboot -f
+  fi
+fi
+
 echo "Linux workload regression"
 
 # Failures use reboot -f → OpenSBI sim_exit=1. Do not exit (kills init → panic loop).
@@ -52,10 +69,6 @@ for t in /root/*-linux; do
     echo "PASS $name"
   fi
 done
-
-if [ "$count" -eq 0 ]; then
-  fail_exit "ERROR: no *-linux tests installed under /root"
-fi
 
 echo "SUMMARY total=$count passed=$((count - failed)) failed=$failed"
 if [ "$failed" -ne 0 ]; then
