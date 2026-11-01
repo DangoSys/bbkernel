@@ -21,9 +21,8 @@ mount -t devtmpfs devtmpfs /dev
 insmod /lib/engine.ko
 insmod /lib/trace.ko base=@BUCKYBALL_TRACE_BASE@
 
-# A model in the model region of the DDR is run instead of the regression;
-# a DDR without a model region has no base. Failures use reboot -f, which
-# ends the simulation with an error.
+# An explicitly selected model runs instead of the workload regression.
+# Failures use reboot -f, which ends the simulation with an error.
 if [ -n "@BUCKYBALL_MODEL_BASE@" ]; then
   set +e
   /bin/model-run @BUCKYBALL_MODEL_BASE@
@@ -32,7 +31,7 @@ if [ -n "@BUCKYBALL_MODEL_BASE@" ]; then
   if [ "$rc" -eq 0 ]; then
     echo "PASS model"
     poweroff -f
-  elif [ "$rc" -ne 2 ]; then
+  else
     echo "FAIL model rc=$rc"
     reboot -f
   fi

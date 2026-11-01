@@ -28,7 +28,7 @@ int main(int argc, char **argv) {
   std::filesystem::create_directories("/tmp/model");
   std::filesystem::current_path("/tmp/model");
   for (const auto &[path, entry] : resources::image.files) {
-    if (path == "run.args")
+    if (entry.mapped)
       continue;
     const resources::Mapping data(path, entry.bytes, 8);
     if (std::filesystem::path(path).has_parent_path())

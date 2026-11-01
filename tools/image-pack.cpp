@@ -8,7 +8,6 @@
 //            "@<byte offset>" at the start of every run of non-zero pages;
 //            all-zero pages are left out
 #include <cstdint>
-#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -30,6 +29,8 @@ void place(std::fstream &bin, std::ofstream &hex, const std::string &path,
     throw std::runtime_error(path + " does not fit the DDR at its offset");
   in.seekg(0);
   std::vector<char> data(page);
+  std::vector<char> encoded(3 * page);
+  constexpr char digits[] = "0123456789ABCDEF";
   bool continued = false;
   for (uint64_t done = 0; done < bytes; done += page) {
     const uint64_t length = std::min<uint64_t>(page, bytes - done);
@@ -48,11 +49,12 @@ void place(std::fstream &bin, std::ofstream &hex, const std::string &path,
       hex << '@' << std::hex << offset + done << std::dec << '\n';
     continued = true;
     for (uint64_t i = 0; i < page; ++i) {
-      char digits[4];
-      std::snprintf(digits, sizeof digits, "%02X\n",
-                    static_cast<unsigned char>(data[i]));
-      hex << digits;
+      const auto byte = static_cast<unsigned char>(data[i]);
+      encoded[3 * i] = digits[byte >> 4];
+      encoded[3 * i + 1] = digits[byte & 15];
+      encoded[3 * i + 2] = '\n';
     }
+    hex.write(encoded.data(), encoded.size());
   }
 }
 } // namespace

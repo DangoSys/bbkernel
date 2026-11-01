@@ -250,6 +250,13 @@ set(BUDDY_SOURCE_DIR ${REPO_ROOT}/stack/thirdparty/buddy-mlir)
 # target. The interpreter is the rootfs's own; libraries are not searched for
 # in the toolchain's store.
 set(RISCV_BUDDY ${CMAKE_BINARY_DIR}/buddy-cli-rv)
+file(GLOB_RECURSE BUDDY_CLI_SOURCES CONFIGURE_DEPENDS
+     "${BUDDY_SOURCE_DIR}/tools/buddy-cli/*.cpp"
+     "${BUDDY_SOURCE_DIR}/tools/buddy-cli/*.h"
+     "${BUDDY_SOURCE_DIR}/tools/buddy-cli/CMakeLists.txt"
+     "${BUDDY_SOURCE_DIR}/runtime/*.cpp"
+     "${BUDDY_SOURCE_DIR}/runtime/*.h"
+     "${BUDDY_SOURCE_DIR}/runtime/CMakeLists.txt")
 add_custom_command(
   OUTPUT ${RISCV_BUDDY}/buddy-cli
   COMMAND ${CMAKE_COMMAND} -G Ninja -S ${BUDDY_SOURCE_DIR}/llvm/llvm -B ${RISCV_BUDDY}/mlir
@@ -275,6 +282,7 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} --build ${RISCV_BUDDY}/buddy --target buddy-cli
   COMMAND ${CMAKE_COMMAND} -E copy ${RISCV_BUDDY}/buddy/bin/buddy-cli ${RISCV_BUDDY}/buddy-cli
   COMMAND patchelf --set-rpath /lib ${RISCV_BUDDY}/buddy-cli
+  DEPENDS ${BUDDY_CLI_SOURCES}
   COMMENT "Building the RISC-V buddy-cli"
   VERBATIM
 )
