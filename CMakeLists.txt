@@ -8,6 +8,10 @@
 # Output (in examples/designs/<design>/output/sims/device/workloads/kernel/):
 #   fw_payload*.bin — OpenSBI + Linux + initramfs (complete boot image)
 #
+# The rootfs carries the engine driver (driver/), which /init loads: the OS
+# owns the hardware threads of the cores and issues their management
+# instructions for the programs.
+#
 cmake_minimum_required(VERSION 3.26)
 project(bbkernel NONE)
 
@@ -75,6 +79,75 @@ add_custom_command(
 )
 
 add_custom_target(busybox-build DEPENDS ${BUSYBOX_BIN})
+
+# ── linux configuration and the engine driver ───────────────────────────────
+# The driver is a module of this kernel, built against its configuration
+# before the rootfs that carries it; the Image then embeds the rootfs.
+set(LINUX_BUILD_DIR ${CMAKE_BINARY_DIR}/linux)
+set(LINUX_IMAGE_PATH ${LINUX_BUILD_DIR}/arch/riscv/boot/Image)
+file(READ ${CONFIG_DIR}/linux-config KERNEL_CONFIG)
+if(BUCKYBALL_HART_COUNT GREATER 1)
+  string(REGEX REPLACE "CONFIG_NR_CPUS=[0-9]+" "CONFIG_NR_CPUS=${BUCKYBALL_HART_COUNT}" KERNEL_CONFIG "${KERNEL_CONFIG}")
+  string(APPEND KERNEL_CONFIG "\nCONFIG_SMP=y\n")
+else()
+  string(APPEND KERNEL_CONFIG "\n# CONFIG_SMP is not set\n")
+endif()
+string(REPLACE "mem=512M" "mem=${BUCKYBALL_GUEST_MEMORY_MIB}M" KERNEL_CONFIG "${KERNEL_CONFIG}")
+file(WRITE ${CMAKE_BINARY_DIR}/linux-config "${KERNEL_CONFIG}")
+
+set(LINUX_CONFIG_STAMP ${CMAKE_BINARY_DIR}/linux-config.stamp)
+add_custom_command(
+    OUTPUT  ${LINUX_CONFIG_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${LINUX_BUILD_DIR}
+    COMMAND make -C ${LINUX_DIR}
+            ARCH=${ARCH}
+            CROSS_COMPILE=${CROSS_COMPILE}
+            O=${LINUX_BUILD_DIR}
+            defconfig
+    COMMAND ${LINUX_DIR}/scripts/kconfig/merge_config.sh -m
+            -O ${LINUX_BUILD_DIR}
+            ${LINUX_BUILD_DIR}/.config
+            ${CMAKE_BINARY_DIR}/linux-config
+    COMMAND make -C ${LINUX_DIR}
+            ARCH=${ARCH}
+            CROSS_COMPILE=${CROSS_COMPILE}
+            O=${LINUX_BUILD_DIR}
+            olddefconfig
+    COMMAND make -C ${LINUX_DIR}
+            ARCH=${ARCH}
+            CROSS_COMPILE=${CROSS_COMPILE}
+            O=${LINUX_BUILD_DIR}
+            -j${NPROC}
+            modules_prepare
+    COMMAND ${CMAKE_COMMAND} -E touch ${LINUX_CONFIG_STAMP}
+    DEPENDS ${CMAKE_BINARY_DIR}/linux-config
+    COMMENT "Configuring Linux"
+    VERBATIM
+)
+
+# Built in a copy of driver/: Kbuild writes its objects next to the sources.
+# The kernel's symbol list (Module.symvers) comes with vmlinux, which embeds
+# the rootfs and so comes after the module: without modversions the module's
+# kernel symbols resolve by name when it is loaded.
+set(DRIVER_BUILD_DIR ${CMAKE_BINARY_DIR}/driver)
+set(ENGINE_MODULE ${DRIVER_BUILD_DIR}/engine.ko)
+add_custom_command(
+    OUTPUT  ${ENGINE_MODULE}
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${KERNEL_DIR}/driver ${DRIVER_BUILD_DIR}
+    COMMAND make -C ${LINUX_DIR}
+            ARCH=${ARCH}
+            CROSS_COMPILE=${CROSS_COMPILE}
+            O=${LINUX_BUILD_DIR}
+            M=${DRIVER_BUILD_DIR}
+            KBUILD_MODPOST_WARN=1
+            modules
+    DEPENDS ${LINUX_CONFIG_STAMP}
+            ${KERNEL_DIR}/driver/Kbuild
+            ${KERNEL_DIR}/driver/engine.c
+            ${KERNEL_DIR}/driver/engine_ioctl.h
+    COMMENT "Building the engine driver"
+    VERBATIM
+)
 
 # ── initramfs source tree ────────────────────────────────────────────────────
 set(WORKLOADS_OUTPUT_DIR ${BUCKYBALL_KERNEL_OUTPUT}/workloads)
@@ -203,7 +276,7 @@ add_custom_target(riscv-buddy-cli DEPENDS ${RISCV_BUDDY}/buddy-cli)
 
 
 set(BUSYBOX_APPLETS
-    sh ash ls cat echo mount umount mkdir rm cp mv ps top free sleep poweroff reboot)
+    sh ash ls cat echo mount umount mkdir rm cp mv ps top free sleep poweroff reboot insmod)
 set(BUSYBOX_LINK_COMMANDS)
 foreach(APPLET IN LISTS BUSYBOX_APPLETS)
   list(APPEND BUSYBOX_LINK_COMMANDS
@@ -232,11 +305,12 @@ add_custom_target(rootfs-build
     ${RUNTIME_LIB_COMMANDS}
     COMMAND ${CMAKE_COMMAND} -E copy ${MODEL_RUN} ${ROOTFS_DIR}/bin/model-run
     COMMAND ${CMAKE_COMMAND} -E copy ${BUDDY_CLI} ${ROOTFS_DIR}/bin/buddy-cli
+    COMMAND ${CMAKE_COMMAND} -E copy ${ENGINE_MODULE} ${ROOTFS_DIR}/lib/engine.ko
     # Copy workload binaries.
     COMMAND ${INSTALL_RUNTIME_COMMAND}
     COMMAND ${CMAKE_COMMAND} -E touch ${ROOTFS_STAMP}
     BYPRODUCTS ${ROOTFS_STAMP}
-    DEPENDS ${BUSYBOX_BIN} ${MODEL_RUN} ${BUDDY_CLI}
+    DEPENDS ${BUSYBOX_BIN} ${MODEL_RUN} ${BUDDY_CLI} ${ENGINE_MODULE}
             ${INITRAMFS_DEVNODES}
             ${INSTALL_WORKLOADS_SCRIPT}
             ${ROOTFS_EXTRA_DEPENDS}
@@ -246,32 +320,11 @@ add_custom_target(rootfs-build
 
 
 # ── linux kernel with initramfs ───────────────────────────────────────────────
-set(LINUX_BUILD_DIR ${CMAKE_BINARY_DIR}/linux)
-set(LINUX_IMAGE_PATH ${LINUX_BUILD_DIR}/arch/riscv/boot/Image)
-file(READ ${CONFIG_DIR}/linux-config KERNEL_CONFIG)
-if(BUCKYBALL_HART_COUNT GREATER 1)
-  string(REGEX REPLACE "CONFIG_NR_CPUS=[0-9]+" "CONFIG_NR_CPUS=${BUCKYBALL_HART_COUNT}" KERNEL_CONFIG "${KERNEL_CONFIG}")
-  string(APPEND KERNEL_CONFIG "\nCONFIG_SMP=y\n")
-else()
-  string(APPEND KERNEL_CONFIG "\n# CONFIG_SMP is not set\n")
-endif()
-string(REPLACE "mem=512M" "mem=${BUCKYBALL_GUEST_MEMORY_MIB}M" KERNEL_CONFIG "${KERNEL_CONFIG}")
-file(WRITE ${CMAKE_BINARY_DIR}/linux-config "${KERNEL_CONFIG}")
-
 add_custom_command(
     OUTPUT  ${LINUX_IMAGE_PATH}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${LINUX_BUILD_DIR}
-    COMMAND make -C ${LINUX_DIR}
-            ARCH=${ARCH}
-            CROSS_COMPILE=${CROSS_COMPILE}
-            O=${LINUX_BUILD_DIR}
-            defconfig
-    COMMAND ${LINUX_DIR}/scripts/kconfig/merge_config.sh -m
-            -O ${LINUX_BUILD_DIR}
-            ${LINUX_BUILD_DIR}/.config
-            ${CMAKE_BINARY_DIR}/linux-config
     # Set initramfs source to rootfs directory plus device-node spec.
-    COMMAND bash -c "echo 'CONFIG_INITRAMFS_SOURCE=\"${ROOTFS_DIR} ${INITRAMFS_DEVNODES}\"' >> ${LINUX_BUILD_DIR}/.config"
+    COMMAND ${LINUX_DIR}/scripts/config --file ${LINUX_BUILD_DIR}/.config
+            --set-str INITRAMFS_SOURCE "${ROOTFS_DIR} ${INITRAMFS_DEVNODES}"
     COMMAND make -C ${LINUX_DIR}
             ARCH=${ARCH}
             CROSS_COMPILE=${CROSS_COMPILE}
@@ -283,7 +336,7 @@ add_custom_command(
             O=${LINUX_BUILD_DIR}
             -j${NPROC}
             Image
-    DEPENDS ${CMAKE_BINARY_DIR}/linux-config ${ROOTFS_STAMP} ${INITRAMFS_DEVNODES}
+    DEPENDS ${LINUX_CONFIG_STAMP} ${ROOTFS_STAMP} ${INITRAMFS_DEVNODES}
     COMMENT "Building Linux kernel with initramfs"
     VERBATIM
 )

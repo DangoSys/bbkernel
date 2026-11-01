@@ -3,21 +3,21 @@
 // Exits 2 when the model region holds no model.
 //
 // Runs the model in the model region of the DDR (see models/tools/model-pack.cpp):
-// takes the runner library out of it and starts buddy-cli with it, with the
+// extracts its files and starts buddy-cli with the
 // options in the image's `run.args`, one per line. buddy-cli and this program
 // are in the rootfs; the model, its weights and the runner are not.
-#include <fcntl.h>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <vector>
 #include <resources.h>
 #include <string>
-#include <sys/wait.h>
 #include <unistd.h>
 
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    std::cerr << "usage: model-run <model base> [buddy-cli options]\n";
+  if (argc != 2) {
+    std::cerr << "usage: model-run <model base>\n";
     return 1;
   }
   try {
@@ -25,22 +25,21 @@ int main(int argc, char **argv) {
   } catch (const resources::NoImage &) {
     return 2;
   }
-  std::string runner;
-  for (const auto &[path, entry] : resources::image.files)
-    if (path.ends_with(".so"))
-      runner = path;
-  if (runner.empty())
-    throw std::runtime_error("the model image has no runner library");
-  const auto bytes = resources::image.files.at(runner).bytes;
-  const resources::Mapping library(runner, bytes, 8);
-  const std::string file = "/tmp/" + runner;
-  const int out = open(file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0755);
-  if (out < 0 || write(out, library.data(), bytes) != ssize_t(bytes))
-    throw std::runtime_error("cannot write " + file);
-  close(out);
-
-  std::vector<std::string> arguments{"buddy-cli", "--model-so", file,
-                                     "--runner-so", file};
+  std::filesystem::create_directories("/tmp/model");
+  std::filesystem::current_path("/tmp/model");
+  for (const auto &[path, entry] : resources::image.files) {
+    if (path == "run.args")
+      continue;
+    const resources::Mapping data(path, entry.bytes, 8);
+    if (std::filesystem::path(path).has_parent_path())
+      std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+    std::ofstream file;
+    file.exceptions(std::ios::failbit | std::ios::badbit);
+    file.open(path, std::ios::binary);
+    file.write(static_cast<const char *>(data.data()), entry.bytes);
+    file.close();
+  }
+  std::vector<std::string> arguments{"buddy-cli"};
   const auto options = resources::image.files.at("run.args");
   const resources::Mapping text("run.args", options.bytes, 8);
   std::istringstream lines(
