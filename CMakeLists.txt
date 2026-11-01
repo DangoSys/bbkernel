@@ -44,6 +44,7 @@ set(BUCKYBALL_KERNEL_OUTPUT "" CACHE PATH
 set(BUCKYBALL_KERNEL_WORKLOADS "" CACHE PATH
   "Directory whose CMakeLists.txt sets BUCKYBALL_KERNEL_PROGRAMS: hart, program pairs installed into the rootfs")
 set(BUCKYBALL_MODEL_BASE "" CACHE STRING "Physical address of the model region of the DDR")
+set(BUCKYBALL_TRACE_BASE "" CACHE STRING "Physical address of the trace register block from design.pb")
 option(BUCKYBALL_KERNEL_INTERACTIVE
   "Keep shared /init shell; do not auto-run design workloads" OFF)
 
@@ -131,9 +132,11 @@ add_custom_command(
 # kernel symbols resolve by name when it is loaded.
 set(DRIVER_BUILD_DIR ${CMAKE_BINARY_DIR}/driver)
 set(ENGINE_MODULE ${DRIVER_BUILD_DIR}/engine.ko)
+set(TRACE_MODULE ${DRIVER_BUILD_DIR}/trace.ko)
 add_custom_command(
-    OUTPUT  ${ENGINE_MODULE}
+    OUTPUT  ${ENGINE_MODULE} ${TRACE_MODULE}
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${KERNEL_DIR}/driver ${DRIVER_BUILD_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy ${REPO_ROOT}/stack/runtime/trace/event.h ${DRIVER_BUILD_DIR}/trace_event.h
     COMMAND make -C ${LINUX_DIR}
             ARCH=${ARCH}
             CROSS_COMPILE=${CROSS_COMPILE}
@@ -145,6 +148,8 @@ add_custom_command(
             ${KERNEL_DIR}/driver/Kbuild
             ${KERNEL_DIR}/driver/engine.c
             ${KERNEL_DIR}/driver/engine_ioctl.h
+            ${KERNEL_DIR}/driver/trace.c
+            ${REPO_ROOT}/stack/runtime/trace/event.h
     COMMENT "Building the engine driver"
     VERBATIM
 )
@@ -186,9 +191,10 @@ else()
       ${ROOTFS_DIR}/root)
 endif()
 
+configure_file(${SHARED_OVERLAY_DIR}/init ${CMAKE_BINARY_DIR}/init-shell @ONLY)
 set(OVERLAY_COPY_COMMAND
-    bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/")
-set(ROOTFS_EXTRA_DEPENDS ${SHARED_OVERLAY_DIR}/init)
+    bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/ && cp ${CMAKE_BINARY_DIR}/init-shell ${ROOTFS_DIR}/init")
+set(ROOTFS_EXTRA_DEPENDS ${CMAKE_BINARY_DIR}/init-shell)
 if(BUCKYBALL_KERNEL_DESIGN AND NOT BUCKYBALL_KERNEL_INTERACTIVE)
   set(OVERLAY_COPY_COMMAND
       bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/ && cp ${DESIGN_INIT} ${ROOTFS_DIR}/init && cp ${USER_BINDINGS} ${ROOTFS_DIR}/root/workload-harts.tsv")
@@ -306,11 +312,12 @@ add_custom_target(rootfs-build
     COMMAND ${CMAKE_COMMAND} -E copy ${MODEL_RUN} ${ROOTFS_DIR}/bin/model-run
     COMMAND ${CMAKE_COMMAND} -E copy ${BUDDY_CLI} ${ROOTFS_DIR}/bin/buddy-cli
     COMMAND ${CMAKE_COMMAND} -E copy ${ENGINE_MODULE} ${ROOTFS_DIR}/lib/engine.ko
+    COMMAND ${CMAKE_COMMAND} -E copy ${TRACE_MODULE} ${ROOTFS_DIR}/lib/trace.ko
     # Copy workload binaries.
     COMMAND ${INSTALL_RUNTIME_COMMAND}
     COMMAND ${CMAKE_COMMAND} -E touch ${ROOTFS_STAMP}
     BYPRODUCTS ${ROOTFS_STAMP}
-    DEPENDS ${BUSYBOX_BIN} ${MODEL_RUN} ${BUDDY_CLI} ${ENGINE_MODULE}
+    DEPENDS ${BUSYBOX_BIN} ${MODEL_RUN} ${BUDDY_CLI} ${ENGINE_MODULE} ${TRACE_MODULE}
             ${INITRAMFS_DEVNODES}
             ${INSTALL_WORKLOADS_SCRIPT}
             ${ROOTFS_EXTRA_DEPENDS}

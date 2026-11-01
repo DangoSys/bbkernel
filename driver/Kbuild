@@ -1,1 +1,1 @@
-obj-m := engine.o
+obj-m := engine.o trace.o

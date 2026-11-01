@@ -19,6 +19,7 @@ mount -t devtmpfs devtmpfs /dev
 # The OS owns the hardware threads of the cores: programs reach them through
 # the engine driver (/dev/engine).
 insmod /lib/engine.ko
+insmod /lib/trace.ko base=@BUCKYBALL_TRACE_BASE@
 
 # A model in the model region of the DDR is run instead of the regression;
 # a DDR without a model region has no base. Failures use reboot -f, which
