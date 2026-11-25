@@ -16,14 +16,17 @@ exec </dev/console >/dev/console 2>&1
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
-# The OS owns the hardware threads of the cores: programs reach them through
-# the engine driver (/dev/engine).
-insmod /lib/engine.ko
+# The OS owns the hardware threads of the harts: programs reach them through
+# the kernel driver (/dev/kernel).
+insmod /lib/bbkernel.ko
 insmod /lib/trace.ko base=@BUCKYBALL_TRACE_BASE@
+# Linux resolves the DMA page faults of the accelerators of CPU harts.
+insmod /lib/acc.ko
 
 # An explicitly selected model runs instead of the workload regression.
 # Failures use reboot -f, which ends the simulation with an error.
 if [ -n "@BUCKYBALL_MODEL_BASE@" ]; then
+  echo "RUN model"
   set +e
   /bin/model-run @BUCKYBALL_MODEL_BASE@
   rc=$?
@@ -33,6 +36,22 @@ if [ -n "@BUCKYBALL_MODEL_BASE@" ]; then
     poweroff -f
   else
     echo "FAIL model rc=$rc"
+    reboot -f
+  fi
+fi
+
+# An explicitly selected benchmark, the same: its program checks its results.
+if [ -n "@BUCKYBALL_BENCH@" ]; then
+  echo "RUN bench"
+  set +e
+  /bin/@BUCKYBALL_BENCH@
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    echo "PASS bench"
+    poweroff -f
+  else
+    echo "FAIL bench rc=$rc"
     reboot -f
   fi
 fi

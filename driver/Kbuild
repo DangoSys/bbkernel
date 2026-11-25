@@ -1,1 +1,3 @@
-obj-m := engine.o trace.o
+# A module cannot be named "kernel": Linux keeps /sys/module/kernel for its own parameters.
+obj-m := bbkernel.o trace.o acc.o
+bbkernel-y := kernel.o

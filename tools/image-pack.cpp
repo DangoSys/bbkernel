@@ -4,9 +4,10 @@
 // model image at <model offset>, and writes the DDR image in the two forms the
 // simulators take:
 //   out.bin  sparse file, byte for byte what the DDR holds
-//   out.hex  $readmemh, one byte per line as the P2E loader takes it, with
-//            "@<byte offset>" at the start of every run of non-zero pages;
-//            all-zero pages are left out
+//   out.hex  P2E loader input, one byte per line, with
+//            "@0x<byte offset>" at the start of each input. DDR retains its
+//            contents across a cold load, so zero bytes in an input must be written.
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -17,7 +18,7 @@
 namespace {
 constexpr uint64_t page = 4096;
 
-// Writes `path` at `offset` of the sparse bin, and its non-zero pages to hex.
+// Writes an input at the same byte offset in both images.
 void place(std::fstream &bin, std::ofstream &hex, const std::string &path,
            uint64_t offset, uint64_t ddr) {
   std::ifstream in(path, std::ios::binary);
@@ -31,30 +32,25 @@ void place(std::fstream &bin, std::ofstream &hex, const std::string &path,
   std::vector<char> data(page);
   std::vector<char> encoded(3 * page);
   constexpr char digits[] = "0123456789ABCDEF";
-  bool continued = false;
+  if (bytes)
+    hex << "@0x" << std::hex << offset << std::dec << '\n';
   for (uint64_t done = 0; done < bytes; done += page) {
     const uint64_t length = std::min<uint64_t>(page, bytes - done);
-    std::fill(data.begin(), data.end(), 0);
     in.read(data.data(), length);
     bool zero = true;
     for (uint64_t i = 0; i < length && zero; ++i)
       zero = data[i] == 0;
-    if (zero) {
-      continued = false;
-      continue;
+    if (!zero) {
+      bin.seekp(offset + done);
+      bin.write(data.data(), length);
     }
-    bin.seekp(offset + done);
-    bin.write(data.data(), length);
-    if (!continued)
-      hex << '@' << std::hex << offset + done << std::dec << '\n';
-    continued = true;
-    for (uint64_t i = 0; i < page; ++i) {
+    for (uint64_t i = 0; i < length; ++i) {
       const auto byte = static_cast<unsigned char>(data[i]);
       encoded[3 * i] = digits[byte >> 4];
       encoded[3 * i + 1] = digits[byte & 15];
       encoded[3 * i + 2] = '\n';
     }
-    hex.write(encoded.data(), encoded.size());
+    hex.write(encoded.data(), 3 * length);
   }
 }
 } // namespace
@@ -68,11 +64,11 @@ int main(int argc, char **argv) {
   const uint64_t ddr = std::stoull(argv[3], nullptr, 0);
   std::fstream bin(argv[1], std::ios::binary | std::ios::in | std::ios::out | std::ios::trunc);
   std::ofstream hex(argv[2]);
+  bin.seekp(ddr - 1);
+  bin.put(0);
   place(bin, hex, argv[4], 0, ddr);
   if (argc == 7)
     place(bin, hex, argv[5], std::stoull(argv[6], nullptr, 0), ddr);
-  bin.seekp(ddr - 1);
-  bin.put(0);
   if (!bin || !hex)
     throw std::runtime_error("cannot write the image");
 }

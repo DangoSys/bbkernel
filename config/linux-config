@@ -1,7 +1,7 @@
 CONFIG_AS_VERSION=23900
 # CONFIG_ATA is not set
 # CONFIG_BACKLIGHT_CLASS_DEVICE is not set
-CONFIG_CMDLINE="console=hvc0 earlycon=sbi loglevel=8 ignore_loglevel panic=1 mem=512M"
+CONFIG_CMDLINE="console=hvc0 earlycon=sbi loglevel=8 ignore_loglevel panic=1 rootfstype=ramfs mem=512M"
 CONFIG_DEBUG_SECTION_MISMATCH=y
 CONFIG_DEFAULT_HOSTNAME="buckyball"
 CONFIG_DEVTMPFS=y
@@ -82,3 +82,20 @@ CONFIG_OVERRIDE_RNG_ENTROPY_VALUE=256
 # CONFIG_RISCV_PMU is not set
 CONFIG_DEVMEM=y
 # CONFIG_STRICT_DEVMEM is not set
+# The riscv defconfig is a debug kernel; models and boots are measured on this one.
+# CONFIG_DEBUG_VM is not set
+# CONFIG_DEBUG_VM_PGTABLE is not set
+# CONFIG_DEBUG_SPINLOCK is not set
+# CONFIG_DEBUG_MUTEXES is not set
+# CONFIG_DEBUG_RWSEMS is not set
+# CONFIG_DEBUG_ATOMIC_SLEEP is not set
+# CONFIG_DEBUG_LIST is not set
+# CONFIG_DEBUG_PLIST is not set
+# CONFIG_DEBUG_SG is not set
+# CONFIG_DEBUG_TIMEKEEPING is not set
+# CONFIG_RCU_EQS_DEBUG is not set
+# CONFIG_SCHED_DEBUG is not set
+# CONFIG_SOFTLOCKUP_DETECTOR is not set
+# CONFIG_WQ_WATCHDOG is not set
+# CONFIG_DEBUG_PAGEALLOC is not set
+# CONFIG_DEBUG_RT_MUTEXES is not set

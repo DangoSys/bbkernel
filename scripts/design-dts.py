@@ -42,7 +42,7 @@ def isa(core) -> tuple[str, bool]:
     if core.HasField("param"):
         base = "rv64imac" if core.fpu.f_len == 0 else "rv64imafdc"
         return base, core.param.pg_levels == 3
-    raise ValueError(f"Core {core.id}: missing CPU ISA parameters")
+    raise ValueError(f"Hart {core.hart_id}: missing CPU ISA parameters")
 
 
 def cells(value: int) -> str:
@@ -50,7 +50,7 @@ def cells(value: int) -> str:
 
 
 def generate(design, guest_bytes: int, timebase_hz: int) -> str:
-    harts = sorted(design.device.cores, key=lambda core: core.hart_id)
+    harts = sorted(design.device.harts, key=lambda core: core.hart_id)
     ids = [core.hart_id for core in harts]
     if not ids or ids != list(range(len(ids))):
         raise ValueError(

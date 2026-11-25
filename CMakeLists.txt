@@ -5,12 +5,13 @@
 #   busybox/  — busybox 1.36
 #   opensbi/  — OpenSBI firmware
 #
-# Output (in examples/designs/<design>/output/sims/device/workloads/kernel/):
-#   fw_payload*.bin — OpenSBI + Linux + initramfs (complete boot image)
+# Output (in examples/designs/<design>/output/sims/device/workloads/image/):
+#   ${IMAGE_NAME}.bin — OpenSBI + Linux + initramfs (complete boot image)
 #
-# The rootfs carries the engine driver (driver/), which /init loads: the OS
-# owns the hardware threads of the cores and issues their management
-# instructions for the programs.
+# The rootfs carries the kernel driver (driver/), which /init loads: the OS
+# owns the hardware threads of the harts and issues their management
+# instructions for the programs. The acc driver resolves the DMA page faults
+# of the accelerators of CPU harts.
 #
 cmake_minimum_required(VERSION 3.26)
 project(bbkernel NONE)
@@ -24,7 +25,7 @@ set(OPENSBI_DIR    ${THIRDPARTY_DIR}/opensbi)
 set(CONFIG_DIR     ${KERNEL_DIR}/config)
 set(SHARED_OVERLAY_DIR ${KERNEL_DIR}/overlay)
 set(PLATFORM_DIR   ${KERNEL_DIR}/opensbi-platform)
-set(OUTPUT_DIR ${BUCKYBALL_KERNEL_OUTPUT}/workloads/kernel)
+set(OUTPUT_DIR ${IMAGE_OUTPUT}/workloads/image)
 
 set(CROSS_COMPILE  riscv64-unknown-linux-gnu-)
 set(ARCH           riscv)
@@ -38,19 +39,21 @@ set(BUCKYBALL_GUEST_MEMORY_MIB 512 CACHE STRING "Linux guest memory budget in Mi
 math(EXPR BUCKYBALL_GUEST_MEMORY_BYTES "${BUCKYBALL_GUEST_MEMORY_MIB} * 1048576")
 set(BUCKYBALL_FDT_SIZE 262144)
 math(EXPR BUCKYBALL_FDT_ADDR "2147483648 + ${BUCKYBALL_GUEST_MEMORY_BYTES} - ${BUCKYBALL_FDT_SIZE}")
-set(BUCKYBALL_KERNEL_DESIGN "" CACHE STRING "Design whose Linux workloads the rootfs carries")
-set(BUCKYBALL_KERNEL_OUTPUT "" CACHE PATH
+set(IMAGE_DESIGN "" CACHE STRING "Design whose Linux workloads the rootfs carries")
+set(IMAGE_OUTPUT "" CACHE PATH
   "Output root of the simulation the kernel is built for: output/sims/<selection> of the design")
-set(BUCKYBALL_KERNEL_WORKLOADS "" CACHE PATH
-  "Directory whose CMakeLists.txt sets BUCKYBALL_KERNEL_PROGRAMS: hart, program pairs installed into the rootfs")
+set(IMAGE_WORKLOADS "" CACHE PATH
+  "Directory whose CMakeLists.txt sets IMAGE_PROGRAMS: hart, program pairs installed into the rootfs")
 set(BUCKYBALL_MODEL_BASE "" CACHE STRING "Physical address of the model region of the DDR")
+set(BUCKYBALL_BENCH "" CACHE STRING
+  "Benchmark the image runs instead of the regression: its Linux program workloads/src/benchmark/linux/<bench>")
 set(BUCKYBALL_TRACE_BASE "" CACHE STRING "Physical address of the trace register block from design.pb")
-option(BUCKYBALL_KERNEL_INTERACTIVE
+option(IMAGE_INTERACTIVE
   "Keep shared /init shell; do not auto-run design workloads" OFF)
 
-# OUTPUT_DIR belongs to one device config, so the image name is fixed.
-set(FW_PAYLOAD_NAME fw_payload-linux)
-set(OPENSBI_FW    ${OUTPUT_DIR}/${FW_PAYLOAD_NAME}.bin)
+set(IMAGE_NAME "" CACHE STRING
+  "The image's name: <design>-test-linux, <design>-<model>-linux, <design>-<bench>-linux or <design>-interactive-linux")
+set(OPENSBI_FW    ${OUTPUT_DIR}/${IMAGE_NAME}.bin)
 set(BUSYBOX_BIN   ${CMAKE_BINARY_DIR}/busybox/busybox)
 set(ROOTFS_DIR    ${CMAKE_BINARY_DIR}/rootfs)
 set(ROOTFS_STAMP  ${CMAKE_BINARY_DIR}/rootfs.stamp)
@@ -81,7 +84,7 @@ add_custom_command(
 
 add_custom_target(busybox-build DEPENDS ${BUSYBOX_BIN})
 
-# ── linux configuration and the engine driver ───────────────────────────────
+# ── linux configuration and the kernel driver ───────────────────────────────
 # The driver is a module of this kernel, built against its configuration
 # before the rootfs that carries it; the Image then embeds the rootfs.
 set(LINUX_BUILD_DIR ${CMAKE_BINARY_DIR}/linux)
@@ -131,10 +134,11 @@ add_custom_command(
 # the rootfs and so comes after the module: without modversions the module's
 # kernel symbols resolve by name when it is loaded.
 set(DRIVER_BUILD_DIR ${CMAKE_BINARY_DIR}/driver)
-set(ENGINE_MODULE ${DRIVER_BUILD_DIR}/engine.ko)
+set(KERNEL_MODULE ${DRIVER_BUILD_DIR}/bbkernel.ko)
 set(TRACE_MODULE ${DRIVER_BUILD_DIR}/trace.ko)
+set(ACC_MODULE ${DRIVER_BUILD_DIR}/acc.ko)
 add_custom_command(
-    OUTPUT  ${ENGINE_MODULE} ${TRACE_MODULE}
+    OUTPUT  ${KERNEL_MODULE} ${TRACE_MODULE} ${ACC_MODULE}
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${KERNEL_DIR}/driver ${DRIVER_BUILD_DIR}
     COMMAND ${CMAKE_COMMAND} -E copy ${REPO_ROOT}/stack/runtime/trace/event.h ${DRIVER_BUILD_DIR}/trace_event.h
     COMMAND make -C ${LINUX_DIR}
@@ -146,31 +150,32 @@ add_custom_command(
             modules
     DEPENDS ${LINUX_CONFIG_STAMP}
             ${KERNEL_DIR}/driver/Kbuild
-            ${KERNEL_DIR}/driver/engine.c
-            ${KERNEL_DIR}/driver/engine_ioctl.h
+            ${KERNEL_DIR}/driver/kernel.c
+            ${KERNEL_DIR}/driver/kernel_ioctl.h
             ${KERNEL_DIR}/driver/trace.c
+            ${KERNEL_DIR}/driver/acc.c
             ${REPO_ROOT}/stack/runtime/trace/event.h
-    COMMENT "Building the engine driver"
+    COMMENT "Building the kernel driver"
     VERBATIM
 )
 
 # ── initramfs source tree ────────────────────────────────────────────────────
-set(WORKLOADS_OUTPUT_DIR ${BUCKYBALL_KERNEL_OUTPUT}/workloads)
+set(WORKLOADS_OUTPUT_DIR ${IMAGE_OUTPUT}/workloads)
 set(INSTALL_WORKLOADS_SCRIPT ${KERNEL_DIR}/scripts/install-workloads.sh)
 set(USER_ALLOWLIST ${CMAKE_BINARY_DIR}/user-workloads.allowlist)
 set(USER_BINDINGS ${CMAKE_BINARY_DIR}/user-workloads.tsv)
 set(DESIGN_INIT "")
 
-if(BUCKYBALL_KERNEL_DESIGN)
+if(IMAGE_DESIGN)
   # Linux regression mode: the programs the entry lists, each
   # pinned to its hart by init-workloads.
   set(DESIGN_INIT ${CMAKE_BINARY_DIR}/init-workloads)
   configure_file(${SHARED_OVERLAY_DIR}/init-workloads ${DESIGN_INIT} @ONLY)
-  add_subdirectory("${BUCKYBALL_KERNEL_WORKLOADS}" kernel-workloads)
+  add_subdirectory("${IMAGE_WORKLOADS}" image-workloads)
   set(ALLOWLIST "")
   set(BINDINGS "")
-  while(BUCKYBALL_KERNEL_PROGRAMS)
-    list(POP_FRONT BUCKYBALL_KERNEL_PROGRAMS HART PROGRAM)
+  while(IMAGE_PROGRAMS)
+    list(POP_FRONT IMAGE_PROGRAMS HART PROGRAM)
     string(APPEND ALLOWLIST "${PROGRAM}\n")
     string(APPEND BINDINGS "${HART}\t${PROGRAM}\n")
   endwhile()
@@ -178,7 +183,7 @@ if(BUCKYBALL_KERNEL_DESIGN)
   file(CONFIGURE OUTPUT ${USER_BINDINGS} CONTENT "${BINDINGS}")
 endif()
 
-if(BUCKYBALL_KERNEL_DESIGN)
+if(IMAGE_DESIGN)
   set(INSTALL_RUNTIME_COMMAND
       bash ${INSTALL_WORKLOADS_SCRIPT}
       ${WORKLOADS_OUTPUT_DIR}
@@ -195,19 +200,19 @@ configure_file(${SHARED_OVERLAY_DIR}/init ${CMAKE_BINARY_DIR}/init-shell @ONLY)
 set(OVERLAY_COPY_COMMAND
     bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/ && cp ${CMAKE_BINARY_DIR}/init-shell ${ROOTFS_DIR}/init")
 set(ROOTFS_EXTRA_DEPENDS ${CMAKE_BINARY_DIR}/init-shell)
-if(BUCKYBALL_KERNEL_DESIGN AND NOT BUCKYBALL_KERNEL_INTERACTIVE)
+if(IMAGE_DESIGN AND NOT IMAGE_INTERACTIVE)
   set(OVERLAY_COPY_COMMAND
       bash -c "cp -r ${SHARED_OVERLAY_DIR}/. ${ROOTFS_DIR}/ && cp ${DESIGN_INIT} ${ROOTFS_DIR}/init && cp ${USER_BINDINGS} ${ROOTFS_DIR}/root/workload-harts.tsv")
   list(APPEND ROOTFS_EXTRA_DEPENDS
        ${DESIGN_INIT}
        ${USER_ALLOWLIST}
        ${USER_BINDINGS}
-       ${BUCKYBALL_KERNEL_WORKLOADS}/CMakeLists.txt)
-elseif(BUCKYBALL_KERNEL_DESIGN)
+       ${IMAGE_WORKLOADS}/CMakeLists.txt)
+elseif(IMAGE_DESIGN)
   list(APPEND ROOTFS_EXTRA_DEPENDS
        ${USER_ALLOWLIST}
        ${USER_BINDINGS}
-       ${BUCKYBALL_KERNEL_WORKLOADS}/CMakeLists.txt)
+       ${IMAGE_WORKLOADS}/CMakeLists.txt)
 endif()
 # ── dynamic runtime and the model tools ──────────────────────────────────────
 # buddy-cli loads the model's runner with dlopen, so the rootfs carries the
@@ -297,6 +302,12 @@ foreach(APPLET IN LISTS BUSYBOX_APPLETS)
        COMMAND ${CMAKE_COMMAND} -E create_symlink busybox ${ROOTFS_DIR}/bin/${APPLET})
 endforeach()
 
+set(BENCH_COMMAND)
+if(BUCKYBALL_BENCH)
+  set(BENCH_COMMAND COMMAND ${CMAKE_COMMAND} -E copy
+      ${WORKLOADS_OUTPUT_DIR}/src/benchmark/linux/${BUCKYBALL_BENCH} ${ROOTFS_DIR}/bin/${BUCKYBALL_BENCH})
+endif()
+
 # The workload binaries the rootfs carries are found by name when it is built,
 # so CMake cannot track them: the rootfs is rebuilt on every kernel build.
 add_custom_target(rootfs-build
@@ -319,13 +330,15 @@ add_custom_target(rootfs-build
     ${RUNTIME_LIB_COMMANDS}
     COMMAND ${CMAKE_COMMAND} -E copy ${MODEL_RUN} ${ROOTFS_DIR}/bin/model-run
     COMMAND ${CMAKE_COMMAND} -E copy ${BUDDY_CLI} ${ROOTFS_DIR}/bin/buddy-cli
-    COMMAND ${CMAKE_COMMAND} -E copy ${ENGINE_MODULE} ${ROOTFS_DIR}/lib/engine.ko
+    COMMAND ${CMAKE_COMMAND} -E copy ${KERNEL_MODULE} ${ROOTFS_DIR}/lib/bbkernel.ko
     COMMAND ${CMAKE_COMMAND} -E copy ${TRACE_MODULE} ${ROOTFS_DIR}/lib/trace.ko
+    COMMAND ${CMAKE_COMMAND} -E copy ${ACC_MODULE} ${ROOTFS_DIR}/lib/acc.ko
+    ${BENCH_COMMAND}
     # Copy workload binaries.
     COMMAND ${INSTALL_RUNTIME_COMMAND}
     COMMAND ${CMAKE_COMMAND} -E touch ${ROOTFS_STAMP}
     BYPRODUCTS ${ROOTFS_STAMP}
-    DEPENDS ${BUSYBOX_BIN} ${MODEL_RUN} ${BUDDY_CLI} ${ENGINE_MODULE} ${TRACE_MODULE}
+    DEPENDS ${BUSYBOX_BIN} ${MODEL_RUN} ${BUDDY_CLI} ${KERNEL_MODULE} ${TRACE_MODULE} ${ACC_MODULE}
             ${INITRAMFS_DEVNODES}
             ${INSTALL_WORKLOADS_SCRIPT}
             ${ROOTFS_EXTRA_DEPENDS}
@@ -337,9 +350,12 @@ add_custom_target(rootfs-build
 # ── linux kernel with initramfs ───────────────────────────────────────────────
 add_custom_command(
     OUTPUT  ${LINUX_IMAGE_PATH}
-    # Set initramfs source to rootfs directory plus device-node spec.
+    # Set initramfs source to rootfs directory plus device-node spec. The compression choice only exists
+    # once there is a source, and defaults to gzip: inflating the rootfs is most of a simulated boot.
     COMMAND ${LINUX_DIR}/scripts/config --file ${LINUX_BUILD_DIR}/.config
             --set-str INITRAMFS_SOURCE "${ROOTFS_DIR} ${INITRAMFS_DEVNODES}"
+            --disable INITRAMFS_COMPRESSION_GZIP
+            --enable INITRAMFS_COMPRESSION_NONE
     COMMAND make -C ${LINUX_DIR}
             ARCH=${ARCH}
             CROSS_COMPILE=${CROSS_COMPILE}
@@ -364,12 +380,12 @@ add_custom_target(linux-build DEPENDS ${LINUX_IMAGE_PATH})
 unset(BUCKYBALL_TIMEBASE_HZ CACHE)
 # Match Chipyard's 500 MHz logical clock / 1000 RTC divider, not FPGA wall time.
 set(BUCKYBALL_TIMEBASE_HZ 500000)
-if(BUCKYBALL_KERNEL_DESIGN)
+if(IMAGE_DESIGN)
   find_program(PYTHON3 python3 REQUIRED)
   find_program(DTC dtc REQUIRED)
-  set(DESIGN_PB  ${BUCKYBALL_KERNEL_OUTPUT}/generated/design.pb)
-  set(DESIGN_DTS ${CMAKE_BINARY_DIR}/${BUCKYBALL_KERNEL_DESIGN}.dts)
-  set(DESIGN_DTB ${CMAKE_BINARY_DIR}/${BUCKYBALL_KERNEL_DESIGN}.dtb)
+  set(DESIGN_PB  ${IMAGE_OUTPUT}/generated/design.pb)
+  set(DESIGN_DTS ${CMAKE_BINARY_DIR}/${IMAGE_DESIGN}.dts)
+  set(DESIGN_DTB ${CMAKE_BINARY_DIR}/${IMAGE_DESIGN}.dtb)
   add_custom_command(
       OUTPUT  ${DESIGN_DTB}
       COMMAND ${PYTHON3} ${KERNEL_DIR}/scripts/design-dts.py
@@ -380,14 +396,26 @@ if(BUCKYBALL_KERNEL_DESIGN)
               --output ${DESIGN_DTS}
       COMMAND ${DTC} -I dts -O dtb -o ${DESIGN_DTB} ${DESIGN_DTS}
       DEPENDS ${DESIGN_PB} ${KERNEL_DIR}/scripts/design-dts.py
-      COMMENT "Generating the ${BUCKYBALL_KERNEL_DESIGN} device tree"
+      COMMENT "Generating the ${IMAGE_DESIGN} device tree"
       VERBATIM
   )
+  if(IMAGE_DTS_OVERLAY)
+    find_program(FDTOVERLAY fdtoverlay REQUIRED)
+    set(BASE_DTB ${DESIGN_DTB})
+    set(DESIGN_DTB ${CMAKE_BINARY_DIR}/${IMAGE_DESIGN}-linux.dtb)
+    add_custom_command(
+      OUTPUT ${DESIGN_DTB}
+      COMMAND ${DTC} -@ -I dts -O dtb -o device.dtbo ${IMAGE_DTS_OVERLAY}
+      COMMAND ${FDTOVERLAY} -i ${BASE_DTB} -o ${DESIGN_DTB} device.dtbo
+      DEPENDS ${BASE_DTB} ${IMAGE_DTS_OVERLAY}
+      VERBATIM
+    )
+  endif()
 else()
   set(DESIGN_DTB ${CMAKE_BINARY_DIR}/no-design.dtb)
   add_custom_command(
       OUTPUT  ${DESIGN_DTB}
-      COMMAND ${CMAKE_COMMAND} -E echo "fw_payload needs BUCKYBALL_KERNEL_DESIGN to generate its device tree"
+      COMMAND ${CMAKE_COMMAND} -E echo "fw_payload needs IMAGE_DESIGN to generate its device tree"
       COMMAND ${CMAKE_COMMAND} -E false
       VERBATIM
   )
@@ -444,7 +472,7 @@ add_custom_command(
 )
 
 # ── top-level target ──────────────────────────────────────────────────────────
-add_custom_target(kernel-build
+add_custom_target(image-build
     DEPENDS ${OPENSBI_FW} ${CMAKE_BINARY_DIR}/image-pack
     COMMENT "OpenSBI fw_payload ready at ${OPENSBI_FW}"
 )

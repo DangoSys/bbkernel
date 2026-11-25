@@ -44,6 +44,9 @@ extern char _fw_start[], _fw_end[];
 // This Enable rdtime and rdcycle (in original opensbi its only rdtime, we eable 
 // rdcylce to do performance counting)
 #define BUCKYBALL_SCOUNTEREN_CY_TM 0x03UL
+// Local interrupt 16: a DMA page fault of the accelerator of a CPU core,
+// resolved by the S-mode kernel (driver/acc.c).
+#define BUCKYBALL_MIP_ACC_FAULT (1UL << 16)
 
 #if BUCKYBALL_HART_COUNT < 1
 #error "BUCKYBALL_HART_COUNT must be at least 1"
@@ -190,6 +193,7 @@ static int buckyball_early_init(bool cold_boot) {
   if (sbi_hart_priv_version(sbi_scratch_thishart_ptr()) >=
       SBI_HART_PRIV_VER_1_10)
     csr_set(CSR_SCOUNTEREN, BUCKYBALL_SCOUNTEREN_CY_TM);
+  csr_set(CSR_MIDELEG, BUCKYBALL_MIP_ACC_FAULT);
 
   if (cold_boot) {
     sbi_console_set_device(&buckyball_console);

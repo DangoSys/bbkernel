@@ -25,6 +25,7 @@ int main(int argc, char **argv) {
   } catch (const resources::NoImage &) {
     return 2;
   }
+  std::cerr << "Preparing model files" << std::endl;
   std::filesystem::create_directories("/tmp/model");
   std::filesystem::current_path("/tmp/model");
   for (const auto &[path, entry] : resources::image.files) {
@@ -50,6 +51,7 @@ int main(int argc, char **argv) {
   for (auto &argument : arguments)
     pointers.push_back(argument.data());
   pointers.push_back(nullptr);
+  std::cerr << "Starting model runner" << std::endl;
   execv("/bin/buddy-cli", pointers.data());
   throw std::runtime_error("cannot start /bin/buddy-cli");
 }
